@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+/* Smooth rendering for markdown and LaTeX */
+.katex {
+  font-size: 1em;
+  margin: 0 0.15em;
+}
+
+.katex-display {
+  margin: 0.5em 0;
+}
+
+/* Prevent layout shift during streaming */
+html,
+body,
+#root,
+.message-container {
+  scroll-behavior: smooth;
+}
+
+/* Smooth font rendering */
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Fixed line height for markdown elements to prevent jank */
+.markdown-content,
+.markdown-content p,
+.markdown-content li,
+.markdown-content blockquote {
+  line-height: 1.6;
+}
+
+/* Ensure code blocks don't cause layout shifts */
+.markdown-content code {
+  font-size: 0.875em;
+  line-height: 1.5;
+}
+
+/* Smooth transitions for opacity and colors */
+.message-bubble {
+  transition: opacity 0.1s ease-out;
+}
+
+/* Prevent cumulative layout shift on math rendering */
+.markdown-content .katex-html {
+  padding: 0;
+  margin: 0;
+}
+
+/* CSS containment to prevent layout shift from KaTeX rendering */
+.markdown-content {
+  contain: layout style paint;
+}
+
+/* Message bubble containment */
+.message-bubble {
+  contain: layout style paint;
+}
+
+/* Prevent layout shift in message container during streaming */
+.message-container {
+  contain: layout style;
+}
+
+/* KaTeX inline and display math wrapper containment */
+.katex,
+.katex-display {
+  contain: style paint;
+}
+
+/* Ensure paragraphs and other elements have stable sizing */
+.markdown-content > * {
+  contain: layout style paint;
+}
+
+/* Prevent KaTeX from causing scrollbar appearance/disappearance */
+.flex-1.overflow-y-auto {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
+/* Ensure code blocks and tables are scrollable within message bubbles */
+.markdown-content pre,
+.markdown-content code:not(.inline),
+.markdown-content table {
+  max-width: 100%;
+}
+
+/* Style horizontal scrollbars to be minimal but visible */
+.markdown-content ::-webkit-scrollbar {
+  height: 6px;
+}
+
+.markdown-content ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.markdown-content ::-webkit-scrollbar-thumb {
+  background: #cbd5e0;
+  border-radius: 3px;
+}
+
+.markdown-content ::-webkit-scrollbar-thumb:hover {
+  background: #a0aec0;
+}
+
+/* Style textarea scrollbar */
+textarea::-webkit-scrollbar {
+  width: 6px;
+}
+
+textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+textarea::-webkit-scrollbar-thumb {
+  background: #cbd5e0;
+  border-radius: 3px;
+}
+
+textarea::-webkit-scrollbar-thumb:hover {
+  background: #a0aec0;
+}

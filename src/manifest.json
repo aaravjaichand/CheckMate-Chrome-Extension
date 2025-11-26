@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "CheckMate - AI-Powered Grading Assistant",
+  "version": "1.0.0",
+  "description": "AI-powered grading assistant for Google Classroom",
+  "permissions": [
+    "identity",
+    "storage",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://classroom.googleapis.com/*",
+    "https://www.googleapis.com/*",
+    "https://*.firebaseio.com/*",
+    "https://*.firebaseapp.com/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://*.firebaseapp.com wss://*.firebaseio.com; frame-src 'self' https://*.firebaseapp.com;"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "CheckMate"
+  },
+  "side_panel": {
+    "default_path": "sidebar.html"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "sidebar.css"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "oauth2": {
+    "client_id": "GOOGLE_CLIENT_ID",
+    "scopes": [
+      "openid",
+      "email",
+      "profile",
+      "https://www.googleapis.com/auth/classroom.courses.readonly",
+      "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
+      "https://www.googleapis.com/auth/classroom.student-submissions.students.readonly",
+      "https://www.googleapis.com/auth/classroom.rosters.readonly",
+      "https://www.googleapis.com/auth/classroom.profile.emails",
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/cloud-platform"
+    ]
+  }
+}
