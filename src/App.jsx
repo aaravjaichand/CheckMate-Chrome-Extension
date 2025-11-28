@@ -3,7 +3,7 @@ import { GraduationCap, BarChart3, Settings, Check, X, MessageSquare, ClipboardL
 import { GoogleClassroomAPI, authenticate, getStoredAuthData, storeAuthData, clearToken } from './utils/googleClassroom';
 import { testGeminiConnection } from './utils/gemini';
 import { sendChatMessage, generateConversationName } from './utils/chatbot';
-import { saveGrade, saveAIGradingResult, saveStrugglingTopics, getGradesByClass, signInWithGoogleToken, createConversation, getConversations, getConversation, addMessageToConversation, updateConversationTitle, listenToConversations, listenToGradesByClass, deleteConversation } from './utils/firebase';
+import { saveGrade, saveAIGradingResult, saveStrugglingTopics, getGradesByClass, signInWithGoogleToken, createConversation, getConversations, getConversation, addMessageToConversation, updateConversationTitle, listenToConversations, listenToGradesByClass, deleteConversation, updateClassAnalytics, updateStudentAnalytics } from './utils/firebase';
 import GradeTab from './components/GradeTab';
 import GradesTab from './components/GradesTab';
 import AnalyticsTab from './components/AnalyticsTab';
@@ -603,6 +603,29 @@ const App = () => {
         );
         console.log('Saved struggling topics');
       }
+
+      // Step 3.5: Update Analytics
+      console.log('Updating analytics...');
+      await Promise.all([
+        updateClassAnalytics(
+          selectedCourse.id,
+          {
+            overallScore: gradingResult.overallScore,
+            totalPoints: gradingResult.totalPoints,
+            strugglingTopics: gradingResult.strugglingTopics
+          },
+          selectedSubmission.userId,
+          selectedSubmission.studentName
+        ),
+        updateStudentAnalytics(selectedSubmission.userId, selectedCourse.id, {
+          assignmentId: selectedAssignment.id,
+          assignmentName: selectedAssignment.title,
+          overallScore: gradingResult.overallScore,
+          totalPoints: gradingResult.totalPoints,
+          strugglingTopics: gradingResult.strugglingTopics
+        })
+      ]);
+      console.log('Analytics updated');
 
       // Step 4: Optionally sync to Google Classroom (TODO: implement)
       if (syncToClassroom) {

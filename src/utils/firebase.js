@@ -13,7 +13,8 @@ import {
   query,
   where,
   orderBy,
-  onSnapshot
+  onSnapshot,
+  runTransaction
 } from 'firebase/firestore';
 
 // Firebase configuration from environment variables
@@ -479,6 +480,281 @@ export function listenToGradesByClass(classId, teacherId, callback) {
   });
 
   return unsubscribe;
+}
+
+/**
+ * Update class analytics with new grade data
+ * @param {string} classId - Class ID
+ * @param {Object} gradeData - Grade data
+ * @param {string} studentId - Student ID (optional but recommended)
+ * @param {string} studentName - Student Name (optional but recommended)
+ * @returns {Promise<void>}
+ */
+export async function updateClassAnalytics(classId, gradeData, studentId = null, studentName = null) {
+  try {
+    const classRef = doc(db, 'classAnalytics', classId);
+
+    await runTransaction(db, async (transaction) => {
+      const classDoc = await transaction.get(classRef);
+
+      let newData;
+      // Calculate percentage for the current grade
+      const currentPercentage = (gradeData.overallScore / gradeData.totalPoints) * 100;
+
+      if (!classDoc.exists()) {
+        newData = {
+          averageGrade: currentPercentage,
+          totalAssignments: 1,
+          lastUpdated: Date.now(),
+          commonStrugglingTopics: {},
+          studentPerformances: {}
+        };
+
+        // Initialize struggling topics
+        if (gradeData.strugglingTopics && Array.isArray(gradeData.strugglingTopics)) {
+          gradeData.strugglingTopics.forEach(topic => {
+            newData.commonStrugglingTopics[topic] = 1;
+          });
+        }
+
+        // Initialize student performance if student info provided
+        if (studentId && studentName) {
+          newData.studentPerformances[studentId] = {
+            name: studentName,
+            averageScore: currentPercentage,
+            totalAssignments: 1
+          };
+        }
+      } else {
+        const data = classDoc.data();
+        const oldTotal = data.totalAssignments || 0;
+        const oldAvg = data.averageGrade || 0;
+        const newTotal = oldTotal + 1;
+        // Update average using the percentage
+        const newAvg = ((oldAvg * oldTotal) + currentPercentage) / newTotal;
+
+        newData = {
+          ...data,
+          averageGrade: newAvg,
+          totalAssignments: newTotal,
+          lastUpdated: Date.now()
+        };
+
+        // Update struggling topics
+        if (gradeData.strugglingTopics && Array.isArray(gradeData.strugglingTopics)) {
+          const topics = data.commonStrugglingTopics || {};
+          gradeData.strugglingTopics.forEach(topic => {
+            topics[topic] = (topics[topic] || 0) + 1;
+          });
+          newData.commonStrugglingTopics = topics;
+        }
+
+        // Update student performance if student info provided
+        if (studentId && studentName) {
+          const performances = data.studentPerformances || {};
+          const studentPerf = performances[studentId] || {
+            name: studentName,
+            averageScore: 0,
+            totalAssignments: 0
+          };
+
+          const sOldTotal = studentPerf.totalAssignments || 0;
+          const sOldAvg = studentPerf.averageScore || 0;
+          const sNewTotal = sOldTotal + 1;
+          const sNewAvg = ((sOldAvg * sOldTotal) + currentPercentage) / sNewTotal;
+
+          performances[studentId] = {
+            name: studentName,
+            averageScore: sNewAvg,
+            totalAssignments: sNewTotal
+          };
+
+          newData.studentPerformances = performances;
+        }
+      }
+
+      transaction.set(classRef, newData);
+    });
+    console.log('Successfully updated class analytics');
+  } catch (error) {
+    console.error('Error updating class analytics:', error);
+    // Don't throw to avoid blocking the main save flow
+  }
+}
+
+/**
+ * Update student analytics with new grade data
+ * @param {string} studentId - Student ID
+ * @param {string} classId - Class ID
+ * @param {Object} gradeData - Grade data
+ * @returns {Promise<void>}
+ */
+export async function updateStudentAnalytics(studentId, classId, gradeData) {
+  try {
+    const studentRef = doc(db, 'studentAnalytics', studentId, 'classes', classId);
+
+    await runTransaction(db, async (transaction) => {
+      const studentDoc = await transaction.get(studentRef);
+
+      let newData;
+      const assignmentEntry = {
+        assignmentId: gradeData.assignmentId,
+        assignmentName: gradeData.assignmentName,
+        score: gradeData.overallScore,
+        totalPoints: gradeData.totalPoints,
+        gradedAt: Date.now(),
+        strugglingTopics: gradeData.strugglingTopics || []
+      };
+
+      // Calculate percentage for the current grade
+      const currentPercentage = (gradeData.overallScore / gradeData.totalPoints) * 100;
+
+      if (!studentDoc.exists()) {
+        newData = {
+          averageScore: currentPercentage,
+          totalAssignments: 1,
+          lastUpdated: Date.now(),
+          strugglingTopics: {},
+          assignmentHistory: [assignmentEntry]
+        };
+
+        if (gradeData.strugglingTopics && Array.isArray(gradeData.strugglingTopics)) {
+          gradeData.strugglingTopics.forEach(topic => {
+            newData.strugglingTopics[topic] = {
+              count: 1,
+              assignments: [gradeData.assignmentId]
+            };
+          });
+        }
+      } else {
+        const data = studentDoc.data();
+        const oldTotal = data.totalAssignments || 0;
+        const oldAvg = data.averageScore || 0;
+        const newTotal = oldTotal + 1;
+        const newAvg = ((oldAvg * oldTotal) + currentPercentage) / newTotal;
+
+        newData = {
+          ...data,
+          averageScore: newAvg,
+          totalAssignments: newTotal,
+          lastUpdated: Date.now(),
+          assignmentHistory: [...(data.assignmentHistory || []), assignmentEntry]
+        };
+
+        if (gradeData.strugglingTopics && Array.isArray(gradeData.strugglingTopics)) {
+          const topics = data.strugglingTopics || {};
+          gradeData.strugglingTopics.forEach(topic => {
+            if (!topics[topic]) {
+              topics[topic] = { count: 0, assignments: [] };
+            }
+            topics[topic].count += 1;
+            if (!topics[topic].assignments.includes(gradeData.assignmentId)) {
+              topics[topic].assignments.push(gradeData.assignmentId);
+            }
+          });
+          newData.strugglingTopics = topics;
+        }
+      }
+
+      transaction.set(studentRef, newData);
+    });
+    console.log('Successfully updated student analytics');
+  } catch (error) {
+    console.error('Error updating student analytics:', error);
+  }
+}
+
+
+
+/**
+ * Get class analytics
+ * @param {string} classId - Class ID
+ * @returns {Promise<Object|null>} Class analytics data or null
+ */
+export async function getClassAnalytics(classId) {
+  try {
+    const classRef = doc(db, 'classAnalytics', classId);
+    const snapshot = await getDoc(classRef);
+
+    if (!snapshot.exists()) {
+      return null;
+    }
+
+    return snapshot.data();
+  } catch (error) {
+    console.error('Error fetching class analytics:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get student analytics for a specific class
+ * @param {string} studentId - Student ID
+ * @param {string} classId - Class ID
+ * @returns {Promise<Object|null>} Student analytics data or null
+ */
+export async function getStudentAnalytics(studentId, classId) {
+  try {
+    const studentRef = doc(db, 'studentAnalytics', studentId, 'classes', classId);
+    const snapshot = await getDoc(studentRef);
+
+    if (!snapshot.exists()) {
+      return null;
+    }
+
+    return snapshot.data();
+  } catch (error) {
+    console.error('Error fetching student analytics:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get teacher settings
+ * @param {string} teacherId - Teacher ID
+ * @returns {Promise<Object>} Teacher settings object
+ */
+export async function getTeacherSettings(teacherId) {
+  try {
+    const settingsRef = doc(db, 'teacherSettings', teacherId);
+    const snapshot = await getDoc(settingsRef);
+
+    if (!snapshot.exists()) {
+      // Return default settings
+      return {
+        gradeThresholds: {
+          needsSupport: 80 // B-
+        }
+      };
+    }
+
+    return snapshot.data();
+  } catch (error) {
+    console.error('Error fetching teacher settings:', error);
+    // Return defaults on error
+    return {
+      gradeThresholds: {
+        needsSupport: 80
+      }
+    };
+  }
+}
+
+/**
+ * Save teacher settings
+ * @param {string} teacherId - Teacher ID
+ * @param {Object} settings - Settings object
+ * @returns {Promise<void>}
+ */
+export async function saveTeacherSettings(teacherId, settings) {
+  try {
+    const settingsRef = doc(db, 'teacherSettings', teacherId);
+    await setDoc(settingsRef, settings, { merge: true });
+    console.log('Successfully saved teacher settings');
+  } catch (error) {
+    console.error('Error saving teacher settings:', error);
+    throw error;
+  }
 }
 
 export { auth, db };
