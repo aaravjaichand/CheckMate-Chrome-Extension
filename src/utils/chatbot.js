@@ -121,19 +121,38 @@ export async function sendChatMessage(messages, onChunk = null, signal = null) {
 }
 
 /**
- * Generate a brief conversation name based on the first user message
+ * Generate a brief conversation name based on the first exchange
  * @param {string} userMessage - The first message from the user
- * @returns {Promise<string>} A brief conversation name (4-5 words max)
+ * @param {string} assistantResponse - Optional snippet of the assistant's response (first ~200 chars)
+ * @returns {Promise<string>} A brief conversation name (2-3 words)
  */
-export async function generateConversationName(userMessage) {
-  const maxRetries = 3;
+export async function generateConversationName(userMessage, assistantResponse = '') {
+  const maxRetries = 2;
   let attempt = 0;
+
+  // Build context from both user message and AI response snippet
+  let context = `User: ${userMessage}`;
+  if (assistantResponse) {
+    // Take first ~200 chars of response for context
+    const snippet = assistantResponse.slice(0, 200).trim();
+    context += `\n\nAssistant response preview: ${snippet}`;
+  }
 
   while (attempt < maxRetries) {
     try {
-      const url = `${GEMINI_API_URL}/${GEMINI_MODEL_ID}:generateContent`;
+      // Use a simpler model for title generation - faster and doesn't waste tokens on "thinking"
+      const url = `${GEMINI_API_URL}/gemini-2.0-flash-lite:generateContent`;
 
-      const systemPrompt = "Create a brief, descriptive title for this conversation based on the user's first message. The title should be 3-5 words that capture the main topic or question. Do NOT use generic phrases like 'New Conversation', 'Chat', 'Untitled', or 'Conversation'. Be specific to what the user is asking about. Examples: 'Calculus Derivatives Help', 'Essay Writing Tips', 'Python Loop Question', 'History Project Research'. Return only the title, nothing else.";
+      const systemPrompt = `Generate a 2-3 word title for this conversation based on the exchange below. Rules:
+- EXACTLY 2-3 words, no more
+- Be specific to the main topic being discussed
+- No generic words like "Help", "Question", "Chat", "Conversation", "Assistance"
+- No punctuation or special characters
+- Capitalize each word
+
+Examples: "Quadratic Equations", "Essay Structure", "Python Arrays", "Cell Division", "French Revolution"
+
+Return ONLY the title, nothing else.`;
 
       const response = await fetch(url, {
         method: 'POST',
@@ -144,13 +163,13 @@ export async function generateConversationName(userMessage) {
         body: JSON.stringify({
           contents: [{
             role: "user",
-            parts: [{ text: userMessage }]
+            parts: [{ text: context }]
           }],
           systemInstruction: {
             parts: [{ text: systemPrompt }]
           },
           generationConfig: {
-            maxOutputTokens: 50,
+            maxOutputTokens: 30,
             temperature: 0.3
           }
         })
@@ -164,15 +183,43 @@ export async function generateConversationName(userMessage) {
       }
 
       const result = await response.json();
-      return result.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'New Conversation';
+      const rawTitle = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+      if (!rawTitle) {
+        throw new Error('Empty title returned');
+      }
+
+      // Sanitize: remove special chars (keep letters, numbers, spaces), limit to 3 words, max 40 chars
+      const sanitized = rawTitle
+        .replace(/[^a-zA-Z0-9\s]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .split(' ')
+        .filter(word => word.length > 0)
+        .slice(0, 3)
+        .join(' ')
+        .slice(0, 40);
+
+      if (!sanitized || sanitized.length < 2) {
+        // Fallback: use first few words of user message
+        const fallback = userMessage
+          .replace(/[^a-zA-Z0-9\s]/g, '')
+          .split(' ')
+          .filter(w => w.length > 2)
+          .slice(0, 2)
+          .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+          .join(' ');
+        return fallback || 'New Conversation';
+      }
+
+      return sanitized;
 
     } catch (error) {
       attempt++;
       if (attempt >= maxRetries) {
         return 'New Conversation';
       }
-      const delay = Math.pow(2, attempt - 1) * 1000;
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
   }
 

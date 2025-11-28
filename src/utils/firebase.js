@@ -157,9 +157,8 @@ export async function getConversation(teacherId, conversationId) {
  * @param {string} teacherId - Teacher ID
  * @param {string} conversationId - Conversation ID
  * @param {Object} message - Message object { role, content }
- * @param {string} title - Optional conversation title
  */
-export async function addMessageToConversation(teacherId, conversationId, message, title = null) {
+export async function addMessageToConversation(teacherId, conversationId, message) {
   const conversationRef = doc(db, 'conversations', teacherId, 'userConversations', conversationId);
   const snapshot = await getDoc(conversationRef);
 
@@ -174,16 +173,11 @@ export async function addMessageToConversation(teacherId, conversationId, messag
     timestamp: Date.now()
   }];
 
-  const updateData = {
+  await setDoc(conversationRef, {
+    ...conversation,
     messages: updatedMessages,
     updatedAt: Date.now()
-  };
-
-  if (title && conversation.title === 'New Conversation') {
-    updateData.title = title;
-  }
-
-  await setDoc(conversationRef, { ...conversation, ...updateData });
+  });
 }
 
 /**

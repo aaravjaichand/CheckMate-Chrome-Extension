@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { GraduationCap, BarChart3, Settings, Check, X, MessageSquare, ClipboardList } from 'lucide-react';
 import { GoogleClassroomAPI, authenticate, getStoredAuthData, storeAuthData } from './utils/googleClassroom';
 import { testGeminiConnection } from './utils/gemini';
@@ -88,6 +88,9 @@ function AppContent() {
   const [gradesUnsubscribe, setGradesUnsubscribe] = useState(null);
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedConversationIds, setSelectedConversationIds] = useState([]);
+
+  // Ref to track conversations currently generating names (prevents duplicates)
+  const generatingNamesRef = useRef(new Set());
 
   // Check for existing token on mount
   useEffect(() => {
@@ -649,26 +652,18 @@ function AppContent() {
     const assistantMessage = { role: 'assistant', content: '' };
     setMessages([...updatedMessages, assistantMessage]);
 
-    if (selectedConversation) {
+    // Capture IDs to avoid stale closure issues
+    const conversationId = selectedConversation?.id;
+    const userId = firebaseUser?.uid;
+
+    // Track if this is the first message (for name generation after AI responds)
+    const shouldGenerateName = conversationId && userId && 
+      selectedConversation.title === 'New Conversation' &&
+      !generatingNamesRef.current.has(conversationId);
+
+    if (conversationId && userId) {
       try {
-        await addMessageToConversation(firebaseUser.uid, selectedConversation.id, newUserMessage);
-
-        const isFirstMessage = selectedConversation.title === 'New Conversation' ||
-          !selectedConversation.messages?.length;
-
-        if (isFirstMessage) {
-          generateConversationName(userMessage)
-            .then(async (generatedName) => {
-              try {
-                await updateConversationTitle(firebaseUser.uid, selectedConversation.id, generatedName);
-              } catch {
-                // Title update failed silently
-              }
-            })
-            .catch(() => {
-              // Name generation failed silently
-            });
-        }
+        await addMessageToConversation(userId, conversationId, newUserMessage);
       } catch {
         // Message save failed silently
       }
@@ -697,15 +692,39 @@ function AppContent() {
         controller.signal
       );
 
-      if (selectedConversation && fullAssistantContent) {
+      if (conversationId && userId && fullAssistantContent) {
         try {
-          await addMessageToConversation(firebaseUser.uid, selectedConversation.id, {
+          await addMessageToConversation(userId, conversationId, {
             role: 'assistant',
             content: fullAssistantContent
           });
 
-          const updatedConversation = await getConversation(firebaseUser.uid, selectedConversation.id);
-          setSelectedConversation(updatedConversation);
+          const updatedConversation = await getConversation(userId, conversationId);
+          if (updatedConversation) {
+            setSelectedConversation(updatedConversation);
+          }
+
+          // Generate conversation name after we have AI response for better context
+          if (shouldGenerateName) {
+            generatingNamesRef.current.add(conversationId);
+            
+            generateConversationName(userMessage, fullAssistantContent)
+              .then(async (generatedName) => {
+                if (generatedName && generatedName !== 'New Conversation') {
+                  setSelectedConversation(prev => 
+                    prev?.id === conversationId ? { ...prev, title: generatedName } : prev
+                  );
+                  setConversations(prev => 
+                    prev.map(c => c.id === conversationId ? { ...c, title: generatedName } : c)
+                  );
+                  await updateConversationTitle(userId, conversationId, generatedName);
+                }
+              })
+              .catch(() => {})
+              .finally(() => {
+                generatingNamesRef.current.delete(conversationId);
+              });
+          }
         } catch {
           // Assistant message save failed silently
         }
