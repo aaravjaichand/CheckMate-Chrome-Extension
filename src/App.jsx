@@ -86,6 +86,19 @@ const App = () => {
     const unsubscribe = listenToConversations(firebaseUser.uid, (updatedConversations) => {
       setConversations(updatedConversations);
       setIsLoadingConversations(false);
+
+      // If we have a selected conversation, update it with the latest data
+      if (selectedConversation) {
+        const updatedSelected = updatedConversations.find(c => c.id === selectedConversation.id);
+        if (updatedSelected) {
+          // Only update if there are meaningful changes (like title or messages)
+          // This prevents unnecessary re-renders but ensures title updates are caught
+          if (updatedSelected.title !== selectedConversation.title ||
+            (updatedSelected.messages && selectedConversation.messages && updatedSelected.messages.length !== selectedConversation.messages.length)) {
+            setSelectedConversation(updatedSelected);
+          }
+        }
+      }
     });
 
     setConversationUnsubscribe(() => unsubscribe);
@@ -93,7 +106,7 @@ const App = () => {
     return () => {
       unsubscribe();
     };
-  }, [firebaseUser]);
+  }, [firebaseUser, selectedConversation]);
 
   // Clean up grades listener when component unmounts or class selection changes
   useEffect(() => {
@@ -725,7 +738,7 @@ const App = () => {
     // Save user message to Firebase if in a conversation
     if (selectedConversation) {
       try {
-        await addMessageToConversation(firebaseUser.uid, selectedConversation.id, newUserMessage, userMessage);
+        await addMessageToConversation(firebaseUser.uid, selectedConversation.id, newUserMessage);
 
         // Auto-generate conversation name if this is the first user message
         const isFirstMessage = selectedConversation.title === 'New Conversation' ||
@@ -797,7 +810,7 @@ const App = () => {
         }
       }
     } catch (err) {
-      if (err.message === 'Stream aborted') {
+      if (err.message === 'Stream aborted' || err.name === 'AbortError' || err.message.includes('BodyStreamBuffer was aborted')) {
         console.log('Message generation stopped by user');
       } else {
         console.error('Error sending message:', err);

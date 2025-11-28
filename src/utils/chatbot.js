@@ -154,41 +154,63 @@ export async function generateConversationName(userMessage, accessToken) {
     return 'New Conversation';
   }
 
-  try {
-    const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${GOOGLE_PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${MODEL_ID}:generateContent`;
+  const maxRetries = 3;
+  let attempt = 0;
 
-    const systemPrompt = "Name this user's conversation based on their first message. Respond in a simple EXTREMELY brief conversation name (4-5 words max, keep short). Respond in ONLY and I MEAN ONLY the conversation name and nothing else";
+  while (attempt < maxRetries) {
+    try {
+      const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${GOOGLE_PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${MODEL_ID}:generateContent`;
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        contents: [{
-          role: "user",
-          parts: [{ text: userMessage }]
-        }],
-        systemInstruction: {
-          parts: [{ text: systemPrompt }]
+      const systemPrompt = "Name this user's conversation based on their first message. Respond in a simple EXTREMELY brief conversation name (1-2 words max). Respond in ONLY and I MEAN ONLY the conversation name and nothing else";
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
         },
-        generationConfig: {
-          maxOutputTokens: 50
+        body: JSON.stringify({
+          contents: [{
+            role: "user",
+            parts: [{ text: userMessage }]
+          }],
+          systemInstruction: {
+            parts: [{ text: systemPrompt }]
+          },
+          generationConfig: {
+            maxOutputTokens: 50
+          }
+        })
+      });
+
+      if (!response.ok) {
+        // If it's a 429 (Too Many Requests) or 5xx (Server Error), we should retry
+        if (response.status === 429 || response.status >= 500) {
+          throw new Error(`Retryable API error: ${response.status}`);
         }
-      })
-    });
+        // For other errors (400, 401, 403), don't retry
+        throw new Error(`Vertex AI API error: ${response.status}`);
+      }
 
-    if (!response.ok) {
-      throw new Error(`Vertex AI API error: ${response.status}`);
+      const result = await response.json();
+      const conversationName = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'New Conversation';
+      console.log('Generated conversation name:', conversationName);
+      return conversationName;
+
+    } catch (error) {
+      attempt++;
+      console.warn(`Attempt ${attempt} failed to generate conversation name:`, error);
+
+      if (attempt >= maxRetries) {
+        console.error('All attempts to generate conversation name failed.');
+        return 'New Conversation';
+      }
+
+      // Wait before retrying (exponential backoff: 1s, 2s, 4s)
+      const delay = Math.pow(2, attempt - 1) * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
-
-    const result = await response.json();
-    const conversationName = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'New Conversation';
-    return conversationName;
-
-  } catch (error) {
-    console.error('Error generating conversation name:', error);
-    return 'New Conversation';
   }
+
+  return 'New Conversation';
 }

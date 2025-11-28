@@ -14,7 +14,8 @@ import {
   where,
   orderBy,
   onSnapshot,
-  runTransaction
+  runTransaction,
+  updateDoc
 } from 'firebase/firestore';
 
 // Firebase configuration from environment variables
@@ -376,9 +377,7 @@ export async function updateConversationTitle(teacherId, conversationId, title) 
       throw new Error('Conversation not found');
     }
 
-    const conversation = snapshot.data();
-    await setDoc(conversationRef, {
-      ...conversation,
+    await updateDoc(conversationRef, {
       title: title,
       updatedAt: Date.now()
     });
