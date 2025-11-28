@@ -4,6 +4,7 @@ import { signInWithGoogleToken, signOutFromFirebase } from './utils/firebase.js'
 
 // Get environment variables (injected by webpack)
 const GOOGLE_PROJECT_ID = process.env.GOOGLE_PROJECT_ID || 'checkmate-app-a6beb';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // Open sidebar when extension icon is clicked
 chrome.action.onClicked.addListener((tab) => {
@@ -283,15 +284,13 @@ function getMediaType(blob) {
 }
 
 /**
- * Call Vertex AI (Gemini) to grade worksheet
+ * Call Gemini API to grade worksheet
  */
-async function callGeminiGrading(base64Data, mediaType, studentName, assignmentName, gradingStyle, customInstructions, accessToken) {
-  const projectId = GOOGLE_PROJECT_ID || 'your-project-id'; // Fallback or from env
-  const location = 'us-central1';
-  const modelId = 'gemini-2.5-pro';
+async function callGeminiGrading(base64Data, mediaType, studentName, assignmentName, gradingStyle, customInstructions) {
+  const modelId = 'gemini-3-pro-preview';
 
-  if (!accessToken) {
-    throw new Error('Access token required for Vertex AI');
+  if (!GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY is not configured');
   }
 
   // Build system prompt
@@ -304,7 +303,8 @@ async function callGeminiGrading(base64Data, mediaType, studentName, assignmentN
 For each question:
 1. Determine if the answer is correct, partially correct, or incorrect
 2. Assign appropriate points based on the quality of the work
-3. Provide specific, actionable feedback that helps the student improve. IMPORTANT: Do NOT use LaTeX formatting in the feedback. Keep it plain text or simple markdown so it is easy for the teacher to edit.
+3. Provide specific, actionable feedback that helps the student improve.
+   **CRITICAL: The "feedback" field must be straightforward PLAIN TEXT ONLY. Do NOT use any LaTeX ($...$), markdown formatting (**, ##, etc.), or any special delimiters. The feedback is NOT rendered with any formatter - it displays as raw text. Write feedback as simple, readable sentences.**
 4. Identify the topic/concept being tested
 5. For "studentAnswer", transcribe the student's work accurately, but CONVERT any mathematical expressions into LaTeX format (enclosed in $ or $$). For example, if the student wrote "x^2", you should return "$x^2$".
 6. For "correctAnswer", provide the correct solution using LaTeX formatting (enclosed in $ or $$) for all mathematical expressions.
@@ -312,8 +312,7 @@ For each question:
 After grading all questions:
 1. Calculate the overall score
 2. Create a list of topics the student struggled with (questions they got wrong or partially correct)
-
-Be fair, encouraging, and focus on helping students learn from their mistakes.`;
+`;
 
   // Define the grading tool schema (Gemini Function Declaration)
   const gradingTool = {
@@ -397,18 +396,20 @@ Analyze the attached worksheet document, identify all questions and the student'
     },
     generationConfig: {
       temperature: 0.2,
-      maxOutputTokens: 8192
+      maxOutputTokens: 8192,
+      thinkingConfig: {
+        thinkingLevel: "high" // Deep reasoning for accurate grading
+      }
     }
   };
 
-  const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelId}:generateContent`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${GEMINI_API_KEY}`;
 
-  console.log('Calling Vertex AI:', url);
+  console.log('Calling Gemini API:', url);
 
   const response = await fetch(url, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(requestBody)
@@ -416,12 +417,12 @@ Analyze the attached worksheet document, identify all questions and the student'
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Vertex AI API error (${response.status}): ${errorText}`);
+    throw new Error(`Gemini API error (${response.status}): ${errorText}`);
   }
 
   const result = await response.json();
 
-  console.log('==================== RAW VERTEX AI RESPONSE ====================');
+  console.log('==================== RAW GEMINI API RESPONSE ====================');
   console.log('Full response object:', JSON.stringify(result, null, 2));
   console.log('================================================================');
 
@@ -461,16 +462,15 @@ async function handleGradeWorksheet(data) {
   const mediaType = getMediaType(blob);
   console.log('File converted to base64, media type:', mediaType);
 
-  // Step 3: Grade with Vertex AI (Gemini)
-  console.log('Calling Vertex AI for grading...');
+  // Step 3: Grade with Gemini API
+  console.log('Calling Gemini API for grading...');
   const gradingResult = await callGeminiGrading(
     base64Data,
     mediaType,
     studentName,
     assignmentName,
     gradingStyle,
-    customInstructions,
-    accessToken
+    customInstructions
   );
   console.log('Grading complete');
   console.log('Final grading result to return:', gradingResult);

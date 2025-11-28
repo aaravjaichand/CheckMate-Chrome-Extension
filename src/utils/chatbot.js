@@ -1,7 +1,6 @@
-// Chatbot utilities using Vertex AI (Gemini 1.5 Pro)
-const GOOGLE_PROJECT_ID = process.env.GOOGLE_PROJECT_ID || 'checkmate-app-a6beb';
-const LOCATION = 'us-central1';
-const MODEL_ID = 'gemini-2.5-flash';
+// Chatbot utilities using Gemini API
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL_ID = 'gemini-3-pro-preview';
 
 const CHUNK_BATCH_DELAY = 50; // Batch chunks for 50ms to prevent jank
 
@@ -46,16 +45,15 @@ function createBatchedChunkHandler(callback) {
  * @param {Array} messages - Array of message objects with role and content
  * @param {Function} onChunk - Callback function called with batched chunks of text
  * @param {AbortSignal} signal - Optional abort signal to cancel the stream
- * @param {string} accessToken - Google OAuth access token
  * @returns {Promise<string>} The complete chatbot response
  */
-export async function sendChatMessage(messages, onChunk = null, signal = null, accessToken) {
-  if (!accessToken) {
-    throw new Error('Access token required for Vertex AI.');
+export async function sendChatMessage(messages, onChunk = null, signal = null) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY is not configured.');
   }
 
   try {
-    const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${GOOGLE_PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${MODEL_ID}:streamGenerateContent?alt=sse`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL_ID}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
 
     // Convert messages to Gemini format
     // Gemini expects { role: "user" | "model", parts: [{ text: "..." }] }
@@ -73,14 +71,16 @@ export async function sendChatMessage(messages, onChunk = null, signal = null, a
       },
       generationConfig: {
         maxOutputTokens: 2048,
-        temperature: 0.7
+        temperature: 0.7,
+        thinkingConfig: {
+          thinkingLevel: "low" // Faster responses for chat
+        }
       }
     };
 
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(requestBody),
@@ -89,7 +89,7 @@ export async function sendChatMessage(messages, onChunk = null, signal = null, a
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Vertex AI API error (${response.status}): ${errorText}`);
+      throw new Error(`Gemini API error (${response.status}): ${errorText}`);
     }
 
     // Handle streaming response (SSE)
@@ -145,12 +145,10 @@ export async function sendChatMessage(messages, onChunk = null, signal = null, a
 /**
  * Generate a brief conversation name based on the first user message
  * @param {string} userMessage - The first message from the user
- * @param {string} accessToken - Google OAuth access token
  * @returns {Promise<string>} A brief conversation name (4-5 words max)
  */
-export async function generateConversationName(userMessage, accessToken) {
-  if (!accessToken) {
-    // Fallback if no token provided (though it should be)
+export async function generateConversationName(userMessage) {
+  if (!GEMINI_API_KEY) {
     return 'New Conversation';
   }
 
@@ -159,14 +157,13 @@ export async function generateConversationName(userMessage, accessToken) {
 
   while (attempt < maxRetries) {
     try {
-      const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${GOOGLE_PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${MODEL_ID}:generateContent`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL_ID}:generateContent?key=${GEMINI_API_KEY}`;
 
-      const systemPrompt = "Name this user's conversation based on their first message. Respond in a simple EXTREMELY brief conversation name (1-2 words max). Respond in ONLY and I MEAN ONLY the conversation name and nothing else";
+      const systemPrompt = "Create a brief, descriptive title for this conversation based on the user's first message. The title should be 3-5 words that capture the main topic or question. Do NOT use generic phrases like 'New Conversation', 'Chat', 'Untitled', or 'Conversation'. Be specific to what the user is asking about. Examples: 'Calculus Derivatives Help', 'Essay Writing Tips', 'Python Loop Question', 'History Project Research'. Return only the title, nothing else.";
 
       const response = await fetch(url, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -178,7 +175,11 @@ export async function generateConversationName(userMessage, accessToken) {
             parts: [{ text: systemPrompt }]
           },
           generationConfig: {
-            maxOutputTokens: 50
+            maxOutputTokens: 50,
+            temperature: 0.3, // Lower temperature for more consistent naming
+            thinkingConfig: {
+              thinkingLevel: "low" // Fast naming, no complex reasoning needed
+            }
           }
         })
       });
@@ -189,7 +190,7 @@ export async function generateConversationName(userMessage, accessToken) {
           throw new Error(`Retryable API error: ${response.status}`);
         }
         // For other errors (400, 401, 403), don't retry
-        throw new Error(`Vertex AI API error: ${response.status}`);
+        throw new Error(`Gemini API error: ${response.status}`);
       }
 
       const result = await response.json();

@@ -747,7 +747,7 @@ const App = () => {
 
         if (isFirstMessage) {
           // Generate name in parallel with the main chat response (don't await)
-          generateConversationName(userMessage, accessToken)
+          generateConversationName(userMessage)
             .then(async (generatedName) => {
               try {
                 await updateConversationTitle(firebaseUser.uid, selectedConversation.id, generatedName);
@@ -790,8 +790,7 @@ const App = () => {
             return newMessages;
           });
         },
-        controller.signal,
-        accessToken
+        controller.signal
       );
 
       // Save assistant message to Firebase if in a conversation
