@@ -157,21 +157,25 @@ export default function GradingResults({ gradingResult, onResultsChange }) {
             </div>
 
             {/* Question Text */}
-            <div className="text-sm text-gray-700 mb-2">
+            <div className="text-sm text-gray-700 mb-3">
               <span className="font-medium">Question: </span>
               {question.questionText}
             </div>
 
             {/* Student Answer */}
-            <div className="text-sm text-gray-700 mb-2">
-              <span className="font-medium">Student Answer: </span>
-              <LatexRenderer className="inline-block">{question.studentAnswer}</LatexRenderer>
+            <div className="mb-3">
+              <div className="text-sm font-medium text-gray-700 mb-1">Student Answer:</div>
+              <div className="bg-white/60 border border-gray-200 rounded-md p-2 text-sm">
+                <LatexRenderer>{question.studentAnswer}</LatexRenderer>
+              </div>
             </div>
 
             {/* Correct Answer */}
-            <div className="text-sm text-gray-700 mb-3">
-              <span className="font-medium">Correct Answer: </span>
-              <LatexRenderer className="inline-block">{question.correctAnswer}</LatexRenderer>
+            <div className="mb-3">
+              <div className="text-sm font-medium text-gray-700 mb-1">Correct Answer:</div>
+              <div className="bg-white/60 border border-gray-200 rounded-md p-2 text-sm">
+                <LatexRenderer>{question.correctAnswer}</LatexRenderer>
+              </div>
             </div>
 
             {/* Points */}

@@ -1,4 +1,7 @@
-// Google Classroom API utilities
+/**
+ * Google Classroom API utilities
+ */
+
 const API_BASE_URL = process.env.GOOGLE_CLASSROOM_API_BASE_URL || 'https://classroom.googleapis.com/v1';
 
 export class GoogleClassroomAPI {
@@ -20,7 +23,6 @@ export class GoogleClassroomAPI {
 
     if (!response.ok) {
       if (response.status === 401) {
-        // Token expired
         await chrome.storage.local.remove('accessToken');
         throw new Error('SESSION_EXPIRED');
       }
@@ -51,8 +53,7 @@ export class GoogleClassroomAPI {
     try {
       const data = await this.apiCall(`userProfiles/${userId}`);
       return data;
-    } catch (error) {
-      console.error('Error fetching student profile:', error);
+    } catch {
       return null;
     }
   }
@@ -61,8 +62,7 @@ export class GoogleClassroomAPI {
     try {
       const data = await this.apiCall(`courses/${courseId}/students/${userId}`);
       return data;
-    } catch (error) {
-      console.error('Error fetching course student:', error);
+    } catch {
       return null;
     }
   }
@@ -75,11 +75,8 @@ export class GoogleClassroomAPI {
   getSubmissionAttachments(submission) {
     const attachments = [];
 
-    if (submission.assignmentSubmission) {
-      // Get attachments from assignmentSubmission
-      if (submission.assignmentSubmission.attachments) {
-        attachments.push(...submission.assignmentSubmission.attachments);
-      }
+    if (submission.assignmentSubmission?.attachments) {
+      attachments.push(...submission.assignmentSubmission.attachments);
     }
 
     return attachments.map(att => ({
@@ -94,14 +91,16 @@ export class GoogleClassroomAPI {
   }
 }
 
-// Authentication functions
+/**
+ * Authenticate with Google via Chrome Identity API
+ * @returns {Promise<Object>} Auth response with tokens and Firebase user
+ */
 export async function authenticate() {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ action: 'authenticate' }, (response) => {
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
       } else if (response) {
-        // Response now contains { accessToken, firebaseUser, error? }
         resolve(response);
       } else {
         reject(new Error('Authentication failed'));
@@ -110,11 +109,10 @@ export async function authenticate() {
   });
 }
 
-export async function getStoredToken() {
-  const result = await chrome.storage.local.get('accessToken');
-  return result.accessToken;
-}
-
+/**
+ * Get stored auth data from Chrome storage
+ * @returns {Promise<Object>} Stored auth data
+ */
 export async function getStoredAuthData() {
   const result = await chrome.storage.local.get(['accessToken', 'firebaseUser', 'idToken']);
   return {
@@ -124,19 +122,14 @@ export async function getStoredAuthData() {
   };
 }
 
-export async function storeToken(token) {
-  await chrome.storage.local.set({ accessToken: token });
-}
-
+/**
+ * Store auth data in Chrome storage
+ * @param {Object} authData - Auth data to store
+ */
 export async function storeAuthData(authData) {
-  // authData should contain { accessToken, firebaseUser, idToken }
   await chrome.storage.local.set({
     accessToken: authData.accessToken,
     firebaseUser: authData.firebaseUser,
     idToken: authData.idToken
   });
-}
-
-export async function clearToken() {
-  await chrome.storage.local.remove(['accessToken', 'firebaseUser', 'idToken']);
 }

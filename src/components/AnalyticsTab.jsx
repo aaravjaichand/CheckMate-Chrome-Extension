@@ -4,22 +4,14 @@ import { BarChart3, TrendingUp, Users, AlertCircle, BookOpen, ChevronRight, Arro
 
 /**
  * AnalyticsTab component - Displays analytics and insights for classes
- * @param {Object} props
- * @param {Array} props.courses - List of available courses
- * @param {Object} props.selectedClass - Currently selected class for analytics
- * @param {Function} props.onClassSelect - Handler for class selection
  */
-export default function AnalyticsTab({
-  courses,
-  selectedClass,
-  onClassSelect
-}) {
+export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(false);
   const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [studentAnalytics, setStudentAnalytics] = useState(null);
   const [loadingStudent, setLoadingStudent] = useState(false);
-  const [threshold, setThreshold] = useState(80); // Default B-
+  const [threshold, setThreshold] = useState(80);
 
   useEffect(() => {
     loadSettings();
@@ -55,8 +47,8 @@ export default function AnalyticsTab({
     try {
       const data = await getClassAnalytics(selectedClass.id);
       setAnalytics(data);
-    } catch (error) {
-      console.error('Error loading analytics:', error);
+    } catch {
+      // Analytics load failed silently
     } finally {
       setLoading(false);
     }
@@ -67,33 +59,26 @@ export default function AnalyticsTab({
     try {
       const data = await getStudentAnalytics(selectedStudentId, selectedClass.id);
       setStudentAnalytics(data);
-    } catch (error) {
-      console.error('Error loading student analytics:', error);
+    } catch {
+      // Student analytics load failed silently
     } finally {
       setLoadingStudent(false);
     }
   }
 
-  // Helper to get sorted students
   const getSortedStudents = () => {
-    if (!analytics || !analytics.studentPerformances) return [];
+    if (!analytics?.studentPerformances) return [];
     return Object.entries(analytics.studentPerformances)
       .map(([id, data]) => ({ id, ...data }))
       .sort((a, b) => b.averageScore - a.averageScore);
   };
 
   const sortedStudents = getSortedStudents();
-
-  // Filter for Top Performers: Score >= threshold, sorted descending
-  const topStudents = sortedStudents
-    .filter(s => s.averageScore >= threshold)
-    .slice(0, 5);
-
-  // Filter for Needs Support: Score < threshold, sorted descending (highest of the low grades first)
+  const topStudents = sortedStudents.filter(s => s.averageScore >= threshold).slice(0, 5);
   const needsSupportStudents = sortedStudents
     .filter(s => s.averageScore < threshold)
-    .sort((a, b) => b.averageScore - a.averageScore) // Sort descending as requested
-    .slice(0, 5); // Show max 5 as requested
+    .sort((a, b) => b.averageScore - a.averageScore)
+    .slice(0, 5);
 
   if (selectedStudentId) {
     return (
@@ -148,15 +133,16 @@ export default function AnalyticsTab({
                           {new Date(assignment.gradedAt).toLocaleDateString()}
                         </div>
                       </div>
-                      <div className={`px-2 py-1 rounded text-sm font-medium ${assignment.score >= 90 ? 'bg-green-100 text-green-800' :
+                      <div className={`px-2 py-1 rounded text-sm font-medium ${
+                        assignment.score >= 90 ? 'bg-green-100 text-green-800' :
                         assignment.score >= 80 ? 'bg-blue-100 text-blue-800' :
-                          assignment.score >= 70 ? 'bg-yellow-100 text-yellow-800' :
-                            'bg-red-100 text-red-800'
-                        }`}>
+                        assignment.score >= 70 ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-red-100 text-red-800'
+                      }`}>
                         {assignment.score}/{assignment.totalPoints}
                       </div>
                     </div>
-                    {assignment.strugglingTopics && assignment.strugglingTopics.length > 0 && (
+                    {assignment.strugglingTopics?.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2">
                         {assignment.strugglingTopics.map((topic, i) => (
                           <span key={i} className="text-xs px-2 py-1 bg-orange-50 text-orange-700 rounded-full border border-orange-100">
@@ -183,7 +169,7 @@ export default function AnalyticsTab({
                       <div key={topic} className="flex items-center justify-between">
                         <span className="text-sm text-gray-700 capitalize">{topic}</span>
                         <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">
-                          Flagged in {data.count} assignments
+                          Flagged in {data.count} {data.count === 1 ? 'assignment' : 'assignments'}
                         </span>
                       </div>
                     ))}
@@ -197,9 +183,7 @@ export default function AnalyticsTab({
           <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
             <Users className="mx-auto h-12 w-12 text-gray-400 mb-3" />
             <h3 className="text-sm font-medium text-gray-900">No Student Data</h3>
-            <p className="text-sm text-gray-500 mt-1">
-              Could not load analytics for this student.
-            </p>
+            <p className="text-sm text-gray-500 mt-1">Could not load analytics for this student.</p>
           </div>
         )}
       </div>
@@ -209,9 +193,7 @@ export default function AnalyticsTab({
   return (
     <div className="p-4 space-y-6">
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Select Class
-        </label>
+        <label className="block text-sm font-medium text-gray-700 mb-2">Select Class</label>
         <select
           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           value={selectedClass?.id || ''}
@@ -222,9 +204,7 @@ export default function AnalyticsTab({
         >
           <option value="">Choose a class...</option>
           {courses.map(course => (
-            <option key={course.id} value={course.id}>
-              {course.name}
-            </option>
+            <option key={course.id} value={course.id}>{course.name}</option>
           ))}
         </select>
       </div>
@@ -236,7 +216,6 @@ export default function AnalyticsTab({
           </div>
         ) : analytics ? (
           <div className="space-y-6">
-            {/* Key Stats Grid */}
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
                 <div className="flex items-center space-x-2 text-gray-500 mb-1">
@@ -253,13 +232,10 @@ export default function AnalyticsTab({
                   <BookOpen size={16} />
                   <span className="text-xs font-medium uppercase tracking-wider">Assignments Graded</span>
                 </div>
-                <div className="text-2xl font-bold text-gray-900">
-                  {analytics.totalAssignments || 0}
-                </div>
+                <div className="text-2xl font-bold text-gray-900">{analytics.totalAssignments || 0}</div>
               </div>
             </div>
 
-            {/* Top Performers & Needs Support */}
             {sortedStudents.length > 0 && (
               <div className="grid grid-cols-1 gap-4">
                 <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
@@ -304,7 +280,6 @@ export default function AnalyticsTab({
               </div>
             )}
 
-            {/* Common Struggling Topics */}
             <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
               <div className="flex items-center space-x-2 mb-4">
                 <AlertCircle className="text-orange-500" size={20} />
@@ -336,7 +311,6 @@ export default function AnalyticsTab({
               )}
             </div>
 
-            {/* Full Student List */}
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="p-4 border-b border-gray-200">
                 <h3 className="font-semibold text-gray-900">All Students</h3>
@@ -358,10 +332,10 @@ export default function AnalyticsTab({
                       </div>
                     </div>
                     <div className="flex items-center">
-                      <span className={`text-sm font-bold mr-3 ${student.averageScore >= 90 ? 'text-green-600' :
-                        student.averageScore >= 70 ? 'text-blue-600' :
-                          'text-orange-600'
-                        }`}>
+                      <span className={`text-sm font-bold mr-3 ${
+                        student.averageScore >= 90 ? 'text-green-600' :
+                        student.averageScore >= 70 ? 'text-blue-600' : 'text-orange-600'
+                      }`}>
                         {Math.round(student.averageScore)}%
                       </span>
                       <ChevronRight size={16} className="text-gray-400" />
@@ -369,9 +343,7 @@ export default function AnalyticsTab({
                   </div>
                 ))}
                 {sortedStudents.length === 0 && (
-                  <div className="p-4 text-center text-gray-500 text-sm">
-                    No student data available yet.
-                  </div>
+                  <div className="p-4 text-center text-gray-500 text-sm">No student data available yet.</div>
                 )}
               </div>
             </div>
@@ -380,9 +352,7 @@ export default function AnalyticsTab({
           <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
             <BarChart3 className="mx-auto h-12 w-12 text-gray-400 mb-3" />
             <h3 className="text-sm font-medium text-gray-900">No Analytics Data</h3>
-            <p className="text-sm text-gray-500 mt-1">
-              Start grading assignments for this class to see analytics.
-            </p>
+            <p className="text-sm text-gray-500 mt-1">Start grading assignments for this class to see analytics.</p>
           </div>
         )
       ) : (

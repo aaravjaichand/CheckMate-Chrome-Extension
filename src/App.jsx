@@ -1,16 +1,37 @@
 import { useState, useEffect } from 'react';
 import { GraduationCap, BarChart3, Settings, Check, X, MessageSquare, ClipboardList } from 'lucide-react';
-import { GoogleClassroomAPI, authenticate, getStoredAuthData, storeAuthData, clearToken } from './utils/googleClassroom';
+import { GoogleClassroomAPI, authenticate, getStoredAuthData, storeAuthData } from './utils/googleClassroom';
 import { testGeminiConnection } from './utils/gemini';
 import { sendChatMessage, generateConversationName } from './utils/chatbot';
-import { saveGrade, saveAIGradingResult, saveStrugglingTopics, getGradesByClass, signInWithGoogleToken, createConversation, getConversations, getConversation, addMessageToConversation, updateConversationTitle, listenToConversations, listenToGradesByClass, deleteConversation, updateClassAnalytics, updateStudentAnalytics } from './utils/firebase';
+import {
+  saveGrade,
+  saveAIGradingResult,
+  saveStrugglingTopics,
+  signInWithGoogleToken,
+  createConversation,
+  getConversations,
+  getConversation,
+  addMessageToConversation,
+  updateConversationTitle,
+  listenToConversations,
+  listenToGradesByClass,
+  deleteConversation,
+  deleteGrade,
+  recalculateClassAnalytics,
+  recalculateStudentAnalytics,
+  updateClassAnalytics,
+  updateStudentAnalytics
+} from './utils/firebase';
+import { ToastProvider, useToast } from './components/Toast';
 import GradeTab from './components/GradeTab';
 import GradesTab from './components/GradesTab';
 import AnalyticsTab from './components/AnalyticsTab';
 import AssistantTab from './components/AssistantTab';
 import SettingsTab from './components/SettingsTab';
 
-const App = () => {
+function AppContent() {
+  const toast = useToast();
+
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -44,11 +65,13 @@ const App = () => {
   const [selectedClassForGrades, setSelectedClassForGrades] = useState(null);
   const [gradesHistory, setGradesHistory] = useState([]);
   const [isLoadingGrades, setIsLoadingGrades] = useState(false);
+  const [isGradeSelectMode, setIsGradeSelectMode] = useState(false);
+  const [selectedGradeIds, setSelectedGradeIds] = useState([]);
 
   // Analytics tab state
   const [selectedClassForAnalytics, setSelectedClassForAnalytics] = useState(null);
 
-  // Anthropic test state
+  // Test state
   const [testResponse, setTestResponse] = useState('');
   const [isTesting, setIsTesting] = useState(false);
 
@@ -62,7 +85,6 @@ const App = () => {
   const [conversations, setConversations] = useState([]);
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
-  const [conversationUnsubscribe, setConversationUnsubscribe] = useState(null);
   const [gradesUnsubscribe, setGradesUnsubscribe] = useState(null);
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedConversationIds, setSelectedConversationIds] = useState([]);
@@ -87,28 +109,21 @@ const App = () => {
       setConversations(updatedConversations);
       setIsLoadingConversations(false);
 
-      // If we have a selected conversation, update it with the latest data
       if (selectedConversation) {
         const updatedSelected = updatedConversations.find(c => c.id === selectedConversation.id);
         if (updatedSelected) {
-          // Only update if there are meaningful changes (like title or messages)
-          // This prevents unnecessary re-renders but ensures title updates are caught
           if (updatedSelected.title !== selectedConversation.title ||
-            (updatedSelected.messages && selectedConversation.messages && updatedSelected.messages.length !== selectedConversation.messages.length)) {
+            (updatedSelected.messages?.length !== selectedConversation.messages?.length)) {
             setSelectedConversation(updatedSelected);
           }
         }
       }
     });
 
-    setConversationUnsubscribe(() => unsubscribe);
-
-    return () => {
-      unsubscribe();
-    };
+    return () => unsubscribe();
   }, [firebaseUser, selectedConversation]);
 
-  // Clean up grades listener when component unmounts or class selection changes
+  // Clean up grades listener
   useEffect(() => {
     return () => {
       if (gradesUnsubscribe) {
@@ -120,11 +135,7 @@ const App = () => {
   // Periodic refresh for courses (every 2 minutes)
   useEffect(() => {
     if (!api) return;
-
-    const intervalId = setInterval(() => {
-      loadCourses();
-    }, 120000); // 120 seconds = 2 minutes
-
+    const intervalId = setInterval(loadCourses, 120000);
     return () => clearInterval(intervalId);
   }, [api]);
 
@@ -136,10 +147,10 @@ const App = () => {
       try {
         const assignmentsData = await api.getAssignments(selectedCourse.id);
         setAssignments(assignmentsData);
-      } catch (error) {
-        console.error('Error refreshing assignments:', error);
+      } catch {
+        // Silent refresh failure
       }
-    }, 60000); // 60 seconds = 1 minute
+    }, 60000);
 
     return () => clearInterval(intervalId);
   }, [api, selectedCourse]);
@@ -151,41 +162,23 @@ const App = () => {
     const intervalId = setInterval(async () => {
       try {
         const submissionsData = await api.getSubmissions(selectedCourse.id, selectedAssignment.id);
-
-        // Fetch student names for each submission
         const submissionsWithNames = await Promise.all(
           submissionsData.map(async (submission) => {
             let studentInfo = await api.getCourseStudent(selectedCourse.id, submission.userId);
-
             if (!studentInfo) {
               studentInfo = await api.getStudentProfile(submission.userId);
             }
-
-            const name = studentInfo?.profile?.name?.fullName ||
-              studentInfo?.name?.fullName ||
-              'Unknown Student';
-
-            const email = studentInfo?.profile?.emailAddress ||
-              studentInfo?.emailAddress ||
-              null;
-
-            // Get attachments for this submission
+            const name = studentInfo?.profile?.name?.fullName || studentInfo?.name?.fullName || 'Unknown Student';
+            const email = studentInfo?.profile?.emailAddress || studentInfo?.emailAddress || null;
             const attachments = api.getSubmissionAttachments(submission);
-
-            return {
-              ...submission,
-              studentName: name,
-              studentEmail: email,
-              attachments: attachments
-            };
+            return { ...submission, studentName: name, studentEmail: email, attachments };
           })
         );
-
         setSubmissions(submissionsWithNames);
-      } catch (error) {
-        console.error('Error refreshing submissions:', error);
+      } catch {
+        // Silent refresh failure
       }
-    }, 30000); // 30 seconds
+    }, 30000);
 
     return () => clearInterval(intervalId);
   }, [api, selectedCourse, selectedAssignment]);
@@ -198,28 +191,20 @@ const App = () => {
         setApi(classroomApi);
         setAccessToken(authData.accessToken);
 
-        // Re-authenticate with Firebase if we have the ID token
         if (authData.idToken) {
           try {
-            console.log('Re-authenticating with Firebase using stored ID token...');
-            const firebaseUser = await signInWithGoogleToken(authData.idToken, authData.accessToken);
-            setFirebaseUser(firebaseUser);
-            console.log('Firebase re-authentication successful:', firebaseUser.uid);
-          } catch (firebaseError) {
-            console.error('Failed to re-authenticate with Firebase:', firebaseError);
-            // Fall back to stored user data
+            const user = await signInWithGoogleToken(authData.idToken, authData.accessToken);
+            setFirebaseUser(user);
+          } catch {
             setFirebaseUser(authData.firebaseUser);
           }
         } else {
-          // No ID token, use stored user data
           setFirebaseUser(authData.firebaseUser);
-          console.log('No ID token available, using stored user data');
         }
-
         setIsAuthenticated(true);
       }
-    } catch (error) {
-      console.error('Error checking auth:', error);
+    } catch {
+      // Auth check failed silently
     }
   }
 
@@ -230,35 +215,25 @@ const App = () => {
     try {
       const authResponse = await authenticate();
 
-      // authResponse contains { accessToken, firebaseUser, error? }
       if (!authResponse.accessToken) {
         throw new Error('No access token received from authentication');
       }
 
-      // Store auth data including idToken for Firebase re-authentication
       await storeAuthData({
         accessToken: authResponse.accessToken,
         firebaseUser: authResponse.firebaseUser,
         idToken: authResponse.idToken
       });
 
-      // Set up Google Classroom API
       const classroomApi = new GoogleClassroomAPI(authResponse.accessToken);
       setApi(classroomApi);
       setAccessToken(authResponse.accessToken);
       setFirebaseUser(authResponse.firebaseUser);
       setIsAuthenticated(true);
-
-      // Log Firebase auth status
-      if (authResponse.firebaseUser) {
-        console.log('Successfully authenticated with Firebase:', authResponse.firebaseUser.uid);
-      } else if (authResponse.error) {
-        console.warn('Firebase authentication failed:', authResponse.error);
-      }
-    } catch (error) {
-      setError(error.message === 'SESSION_EXPIRED'
+    } catch (err) {
+      setError(err.message === 'SESSION_EXPIRED'
         ? 'Session expired. Please sign in again.'
-        : 'Authentication failed: ' + error.message
+        : 'Authentication failed: ' + err.message
       );
     } finally {
       setIsAuthenticating(false);
@@ -267,12 +242,11 @@ const App = () => {
 
   async function handleSignOut() {
     try {
-      // Call background script to properly revoke tokens
       await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage({ action: 'signOut' }, (response) => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
-          } else if (response && response.success) {
+          } else if (response?.success) {
             resolve();
           } else {
             reject(new Error('Sign out failed'));
@@ -280,7 +254,6 @@ const App = () => {
         });
       });
 
-      // Clear local state
       setApi(null);
       setAccessToken(null);
       setFirebaseUser(null);
@@ -293,11 +266,7 @@ const App = () => {
       setSelectedSubmission(null);
       setGradingResult(null);
       setMessages([]);
-
-      console.log('Sign out complete - cleared all state');
-    } catch (error) {
-      console.error('Error during sign out:', error);
-      // Even if there's an error, clear local state
+    } catch {
       setApi(null);
       setAccessToken(null);
       setFirebaseUser(null);
@@ -315,13 +284,13 @@ const App = () => {
     try {
       const coursesData = await api.getCourses();
       setCourses(coursesData);
-    } catch (error) {
-      if (error.message === 'SESSION_EXPIRED') {
+    } catch (err) {
+      if (err.message === 'SESSION_EXPIRED') {
         setIsAuthenticated(false);
         setApi(null);
         setError('Session expired. Please sign in again.');
       } else {
-        setError('Error loading courses: ' + error.message);
+        setError('Error loading courses: ' + err.message);
       }
     } finally {
       setLoading(false);
@@ -339,8 +308,8 @@ const App = () => {
     try {
       const assignmentsData = await api.getAssignments(course.id);
       setAssignments(assignmentsData);
-    } catch (error) {
-      setError('Error loading assignments: ' + error.message);
+    } catch (err) {
+      setError('Error loading assignments: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -355,45 +324,21 @@ const App = () => {
 
     try {
       const submissionsData = await api.getSubmissions(selectedCourse.id, assignment.id);
-
-      // Fetch student names for each submission
       const submissionsWithNames = await Promise.all(
         submissionsData.map(async (submission) => {
-          // Try to get student info from course roster first (more reliable)
           let studentInfo = await api.getCourseStudent(selectedCourse.id, submission.userId);
-
-          // Fallback to user profile if course student not found
           if (!studentInfo) {
             studentInfo = await api.getStudentProfile(submission.userId);
           }
-
-          console.log('Student info for', submission.userId, ':', studentInfo);
-
-          const name = studentInfo?.profile?.name?.fullName ||
-            studentInfo?.name?.fullName ||
-            'Unknown Student';
-
-          const email = studentInfo?.profile?.emailAddress ||
-            studentInfo?.emailAddress ||
-            null;
-
-          console.log('Extracted name:', name, 'email:', email);
-
-          // Get attachments for this submission
+          const name = studentInfo?.profile?.name?.fullName || studentInfo?.name?.fullName || 'Unknown Student';
+          const email = studentInfo?.profile?.emailAddress || studentInfo?.emailAddress || null;
           const attachments = api.getSubmissionAttachments(submission);
-
-          return {
-            ...submission,
-            studentName: name,
-            studentEmail: email,
-            attachments: attachments
-          };
+          return { ...submission, studentName: name, studentEmail: email, attachments };
         })
       );
-
       setSubmissions(submissionsWithNames);
-    } catch (error) {
-      setError('Error loading submissions: ' + error.message);
+    } catch (err) {
+      setError('Error loading submissions: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -406,7 +351,7 @@ const App = () => {
   }
 
   async function handleGrade() {
-    if (!selectedSubmission || !selectedSubmission.attachments || selectedSubmission.attachments.length === 0) {
+    if (!selectedSubmission?.attachments?.length) {
       setError('No worksheet found in this submission. Please make sure the student attached a file.');
       return;
     }
@@ -415,42 +360,33 @@ const App = () => {
     setError(null);
 
     try {
-      // Get the first attachment (assuming it's the worksheet)
       const worksheetAttachment = selectedSubmission.attachments[0];
-
-      // For Drive files, prefer using the file ID directly
       let fileUrl = worksheetAttachment.url;
+
       if (worksheetAttachment.type === 'driveFile' && worksheetAttachment.id) {
-        // Convert Drive file ID to API URL
         fileUrl = `https://www.googleapis.com/drive/v3/files/${worksheetAttachment.id}?alt=media`;
-        console.log('Using Drive API URL:', fileUrl);
       } else if (!worksheetAttachment.url) {
         throw new Error('Could not find a valid URL for the worksheet attachment');
       }
 
-      console.log('Sending grading request to background worker...');
-      console.log('File URL:', fileUrl);
-      console.log('Attachment details:', worksheetAttachment);
-
-      // Send message to background worker to handle grading
       const response = await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage(
           {
             action: 'gradeWorksheet',
             data: {
-              fileUrl: fileUrl,
-              accessToken: accessToken,
+              fileUrl,
+              accessToken,
               studentName: selectedSubmission.studentName,
               assignmentName: selectedAssignment.title,
-              gradingStyle: gradingStyle,
-              customInstructions: customInstructions
+              gradingStyle,
+              customInstructions
             }
           },
-          (response) => {
+          (res) => {
             if (chrome.runtime.lastError) {
               reject(new Error(chrome.runtime.lastError.message));
             } else {
-              resolve(response);
+              resolve(res);
             }
           }
         );
@@ -460,92 +396,56 @@ const App = () => {
         throw new Error(response.error || 'Unknown error during grading');
       }
 
-      console.log('Raw grading result:', response.result);
-
-      // Store raw AI response for later saving to database
       setRawAIResponse(response.result);
 
-      // Validate and normalize the grading result
-      let gradingResult = response.result;
-
-      // If result is a string, try to parse it
-      if (typeof gradingResult === 'string') {
-        console.log('Parsing stringified grading result...');
-        gradingResult = JSON.parse(gradingResult);
+      let result = response.result;
+      if (typeof result === 'string') {
+        result = JSON.parse(result);
       }
 
-      // Validate required fields exist
-      if (!gradingResult || typeof gradingResult !== 'object') {
+      if (!result || typeof result !== 'object') {
         throw new Error('Invalid grading result format: expected an object');
       }
 
-      // Ensure numeric fields are actually numbers
-      if (typeof gradingResult.overallScore !== 'number') {
-        gradingResult.overallScore = parseFloat(gradingResult.overallScore);
-        if (isNaN(gradingResult.overallScore)) {
+      if (typeof result.overallScore !== 'number') {
+        result.overallScore = parseFloat(result.overallScore);
+        if (isNaN(result.overallScore)) {
           throw new Error('Invalid overallScore: cannot convert to number');
         }
       }
 
-      if (typeof gradingResult.totalPoints !== 'number') {
-        gradingResult.totalPoints = parseFloat(gradingResult.totalPoints);
-        if (isNaN(gradingResult.totalPoints) || gradingResult.totalPoints === 0) {
-          // If totalPoints is missing/invalid, try to calculate it from questions
-          if (Array.isArray(gradingResult.questions) && gradingResult.questions.length > 0) {
-            gradingResult.totalPoints = gradingResult.questions.reduce((sum, q) => {
-              return sum + (typeof q.pointsPossible === 'number' ? q.pointsPossible : 0);
-            }, 0);
-            console.log('Calculated totalPoints from questions:', gradingResult.totalPoints);
+      if (typeof result.totalPoints !== 'number') {
+        result.totalPoints = parseFloat(result.totalPoints);
+        if (isNaN(result.totalPoints) || result.totalPoints === 0) {
+          if (Array.isArray(result.questions) && result.questions.length > 0) {
+            result.totalPoints = result.questions.reduce((sum, q) =>
+              sum + (typeof q.pointsPossible === 'number' ? q.pointsPossible : 0), 0);
           } else {
-            throw new Error('Invalid totalPoints: cannot convert to number and cannot calculate from questions');
+            throw new Error('Invalid totalPoints');
           }
         }
       }
 
-      // Validate questions array
-      if (!Array.isArray(gradingResult.questions)) {
+      if (!Array.isArray(result.questions)) {
         throw new Error('Invalid grading result: questions must be an array');
       }
 
-      // Validate each question's numeric fields
-      gradingResult.questions = gradingResult.questions.map((q, idx) => {
-        const validatedQuestion = { ...q };
-        if (typeof validatedQuestion.pointsAwarded !== 'number') {
-          validatedQuestion.pointsAwarded = parseFloat(validatedQuestion.pointsAwarded);
-          if (isNaN(validatedQuestion.pointsAwarded)) {
-            console.warn(`Question ${idx} has invalid pointsAwarded, setting to 0`);
-            validatedQuestion.pointsAwarded = 0;
-          }
-        }
-        if (typeof validatedQuestion.pointsPossible !== 'number') {
-          validatedQuestion.pointsPossible = parseFloat(validatedQuestion.pointsPossible);
-          if (isNaN(validatedQuestion.pointsPossible)) {
-            console.warn(`Question ${idx} has invalid pointsPossible, setting to 0`);
-            validatedQuestion.pointsPossible = 0;
-          }
-        }
-        return validatedQuestion;
-      });
+      result.questions = result.questions.map((q) => ({
+        ...q,
+        pointsAwarded: typeof q.pointsAwarded === 'number' ? q.pointsAwarded : (parseFloat(q.pointsAwarded) || 0),
+        pointsPossible: typeof q.pointsPossible === 'number' ? q.pointsPossible : (parseFloat(q.pointsPossible) || 0)
+      }));
 
-      // Ensure strugglingTopics is an array
-      if (!Array.isArray(gradingResult.strugglingTopics)) {
-        gradingResult.strugglingTopics = [];
+      if (!Array.isArray(result.strugglingTopics)) {
+        result.strugglingTopics = [];
       }
 
-      console.log('Validated grading result:', gradingResult);
-      setGradingResult(gradingResult);
+      setGradingResult(result);
     } catch (err) {
-      console.error('Error grading worksheet:', err);
-      console.error('Full error:', err.stack);
-
-      // Provide more helpful error messages
       let errorMessage = err.message;
-      if (err.message.includes('Invalid totalPoints')) {
-        errorMessage = 'Failed to parse grading results. The AI response was malformed. Please try grading again.';
-      } else if (err.message.includes('Invalid grading result')) {
-        errorMessage = 'The AI returned an invalid response structure. Please try grading again.';
+      if (err.message.includes('Invalid totalPoints') || err.message.includes('Invalid grading result')) {
+        errorMessage = 'The AI returned an invalid response. Please try grading again.';
       }
-
       setError(`Failed to grade worksheet: ${errorMessage}`);
     } finally {
       setIsGrading(false);
@@ -571,21 +471,17 @@ const App = () => {
     setError(null);
 
     try {
-      // Step 1: Save raw AI response to aiGradingResults
       const aiResultId = await saveAIGradingResult({
         submissionId: selectedSubmission.id,
         assignmentId: selectedAssignment.id,
         studentId: selectedSubmission.userId,
         classId: selectedCourse.id,
         model: 'gemini-2.5-pro',
-        customInstructions: customInstructions,
+        customInstructions,
         rawResponse: rawAIResponse
       });
 
-      console.log('Saved AI result with ID:', aiResultId);
-
-      // Step 2: Save grade with reference to AI result
-      const gradeId = await saveGrade({
+      await saveGrade({
         submissionId: selectedSubmission.id,
         assignmentId: selectedAssignment.id,
         studentId: selectedSubmission.userId,
@@ -596,14 +492,11 @@ const App = () => {
         overallScore: gradingResult.overallScore,
         totalPoints: gradingResult.totalPoints,
         syncedToGoogleClassroom: syncToClassroom,
-        aiResultId: aiResultId,
+        aiResultId,
         questions: gradingResult.questions
       });
 
-      console.log('Saved grade with ID:', gradeId);
-
-      // Step 3: Save struggling topics if any
-      if (gradingResult.strugglingTopics && gradingResult.strugglingTopics.length > 0) {
+      if (gradingResult.strugglingTopics?.length) {
         await saveStrugglingTopics(
           selectedSubmission.userId,
           selectedCourse.id,
@@ -614,11 +507,8 @@ const App = () => {
             score: gradingResult.overallScore
           }
         );
-        console.log('Saved struggling topics');
       }
 
-      // Step 3.5: Update Analytics
-      console.log('Updating analytics...');
       await Promise.all([
         updateClassAnalytics(
           selectedCourse.id,
@@ -638,28 +528,14 @@ const App = () => {
           strugglingTopics: gradingResult.strugglingTopics
         })
       ]);
-      console.log('Analytics updated');
 
-      // Step 4: Optionally sync to Google Classroom (TODO: implement)
-      if (syncToClassroom) {
-        console.log('TODO: Sync grade to Google Classroom');
-        // This would call Google Classroom API to update the grade
-        // await api.updateSubmissionGrade(selectedCourse.id, selectedAssignment.id, selectedSubmission.id, gradingResult.overallScore);
-      }
-
-      // Success! Clear the grading result and show success message
-      console.log('Successfully saved all grading data');
       setGradingResult(null);
       setRawAIResponse(null);
       setCustomInstructions('');
       setSyncToClassroom(false);
 
-      // You might want to show a success message to the user
-      // For now, we'll just log it
-      alert('Grades saved successfully!');
-
+      toast.success('Grades saved successfully!');
     } catch (err) {
-      console.error('Error saving grades:', err);
       setError(`Failed to save grades: ${err.message}`);
     } finally {
       setIsSaving(false);
@@ -671,6 +547,9 @@ const App = () => {
     setGradesHistory([]);
     setIsLoadingGrades(true);
     setError(null);
+    // Reset select mode when changing class
+    setIsGradeSelectMode(false);
+    setSelectedGradeIds([]);
 
     if (!firebaseUser) {
       setError('Not authenticated with Firebase');
@@ -678,24 +557,62 @@ const App = () => {
       return;
     }
 
-    // Clean up previous listener if exists
     if (gradesUnsubscribe) {
       gradesUnsubscribe();
     }
 
-    // Set up real-time listener for grades
     const unsubscribe = listenToGradesByClass(course.id, firebaseUser.uid, (updatedGrades) => {
       setGradesHistory(updatedGrades);
       setIsLoadingGrades(false);
-      console.log('Loaded grades for class:', course.name, updatedGrades);
     });
 
     setGradesUnsubscribe(() => unsubscribe);
   }
 
-  function handleGradeCardClick(grade) {
-    console.log('Grade card clicked:', grade);
-    // The modal is handled within GradesTab component
+  function handleToggleGradeSelectMode() {
+    setIsGradeSelectMode(!isGradeSelectMode);
+    setSelectedGradeIds([]);
+  }
+
+  function handleToggleGradeSelection(gradeId) {
+    setSelectedGradeIds(prev =>
+      prev.includes(gradeId)
+        ? prev.filter(id => id !== gradeId)
+        : [...prev, gradeId]
+    );
+  }
+
+  async function handleDeleteSelectedGrades() {
+    if (selectedGradeIds.length === 0 || !selectedClassForGrades || !firebaseUser) return;
+
+    try {
+      setLoading(true);
+
+      // Get the grades to be deleted to find affected students
+      const gradesToDelete = gradesHistory.filter(g => selectedGradeIds.includes(g.id));
+      const affectedStudentIds = [...new Set(gradesToDelete.map(g => g.studentId))];
+
+      // Soft delete each selected grade
+      for (const gradeId of selectedGradeIds) {
+        await deleteGrade(gradeId);
+      }
+
+      // Recalculate class analytics
+      await recalculateClassAnalytics(selectedClassForGrades.id, firebaseUser.uid);
+
+      // Recalculate student analytics for each affected student
+      for (const studentId of affectedStudentIds) {
+        await recalculateStudentAnalytics(studentId, selectedClassForGrades.id, firebaseUser.uid);
+      }
+
+      setIsGradeSelectMode(false);
+      setSelectedGradeIds([]);
+      toast.success(`Deleted ${selectedGradeIds.length} grade${selectedGradeIds.length !== 1 ? 's' : ''} successfully!`);
+    } catch (err) {
+      setError(`Failed to delete grades: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleTestConnection() {
@@ -722,65 +639,52 @@ const App = () => {
     setIsSendingMessage(true);
     setError(null);
 
-    // Create abort controller for stopping the stream
     const controller = new AbortController();
     setAbortController(controller);
 
-    // Add user message to chat
     const newUserMessage = { role: 'user', content: userMessage };
     const updatedMessages = [...messages, newUserMessage];
     setMessages(updatedMessages);
 
-    // Add empty assistant message that will be filled with streaming content
     const assistantMessage = { role: 'assistant', content: '' };
     setMessages([...updatedMessages, assistantMessage]);
 
-    // Save user message to Firebase if in a conversation
     if (selectedConversation) {
       try {
         await addMessageToConversation(firebaseUser.uid, selectedConversation.id, newUserMessage);
 
-        // Auto-generate conversation name if this is the first user message
         const isFirstMessage = selectedConversation.title === 'New Conversation' ||
-          !selectedConversation.messages ||
-          selectedConversation.messages.length === 0;
+          !selectedConversation.messages?.length;
 
         if (isFirstMessage) {
-          // Generate name in parallel with the main chat response (don't await)
           generateConversationName(userMessage)
             .then(async (generatedName) => {
               try {
                 await updateConversationTitle(firebaseUser.uid, selectedConversation.id, generatedName);
-                console.log('Updated conversation title to:', generatedName);
-              } catch (err) {
-                console.error('Error updating conversation title:', err);
+              } catch {
+                // Title update failed silently
               }
             })
-            .catch((err) => {
-              console.error('Error generating conversation name:', err);
+            .catch(() => {
+              // Name generation failed silently
             });
         }
-      } catch (err) {
-        console.error('Error saving user message to Firebase:', err);
+      } catch {
+        // Message save failed silently
       }
     }
 
     try {
       let fullAssistantContent = '';
-
-      // Filter out timestamps before sending to Claude API (Claude only accepts role and content)
       const messagesForAPI = updatedMessages.map(msg => ({
         role: msg.role,
         content: msg.content
       }));
 
-      // Send to chatbot API with streaming
       await sendChatMessage(
         messagesForAPI,
         (chunk) => {
           fullAssistantContent += chunk;
-
-          // Update the last message (assistant) with streaming content
           setMessages(prev => {
             const newMessages = [...prev];
             const lastMessage = newMessages[newMessages.length - 1];
@@ -793,7 +697,6 @@ const App = () => {
         controller.signal
       );
 
-      // Save assistant message to Firebase if in a conversation
       if (selectedConversation && fullAssistantContent) {
         try {
           await addMessageToConversation(firebaseUser.uid, selectedConversation.id, {
@@ -801,20 +704,15 @@ const App = () => {
             content: fullAssistantContent
           });
 
-          // Reload conversation to get updated messages
           const updatedConversation = await getConversation(firebaseUser.uid, selectedConversation.id);
           setSelectedConversation(updatedConversation);
-        } catch (err) {
-          console.error('Error saving assistant message to Firebase:', err);
+        } catch {
+          // Assistant message save failed silently
         }
       }
     } catch (err) {
-      if (err.message === 'Stream aborted' || err.name === 'AbortError' || err.message.includes('BodyStreamBuffer was aborted')) {
-        console.log('Message generation stopped by user');
-      } else {
-        console.error('Error sending message:', err);
+      if (err.name !== 'AbortError' && !err.message?.includes('aborted')) {
         setError(`Failed to send message: ${err.message}`);
-        // Remove the empty assistant message on error
         setMessages(prev => prev.slice(0, -1));
       }
     } finally {
@@ -824,25 +722,11 @@ const App = () => {
   }
 
   function handleStopMessage() {
-    // Abort the streaming request
     if (abortController) {
       abortController.abort();
     }
     setIsSendingMessage(false);
     setAbortController(null);
-  }
-
-  async function loadConversations() {
-    setIsLoadingConversations(true);
-    try {
-      const convos = await getConversations(firebaseUser.uid);
-      setConversations(convos);
-      console.log('Loaded conversations:', convos);
-    } catch (err) {
-      console.error('Error loading conversations:', err);
-    } finally {
-      setIsLoadingConversations(false);
-    }
   }
 
   async function handleNewConversation() {
@@ -853,21 +737,15 @@ const App = () => {
       setSelectedConversation(newConversation);
       setMessages([]);
       setInputMessage('');
-
-      console.log('Created new conversation:', conversationId);
-
-      // Reload conversations list
-      await loadConversations();
     } catch (err) {
-      console.error('Error creating conversation:', err);
       setError(`Failed to create conversation: ${err.message}`);
     }
   }
 
   async function handleSelectConversation(conversation) {
-    // Prevent opening another conversation if one is already open without messages
-    if (selectedConversation && selectedConversation.id !== conversation.id && (!selectedConversation.messages || selectedConversation.messages.length === 0)) {
-      return; // Don't allow selecting a different conversation
+    if (selectedConversation && selectedConversation.id !== conversation.id &&
+      (!selectedConversation.messages?.length)) {
+      return;
     }
 
     setSelectedConversation(conversation);
@@ -887,13 +765,11 @@ const App = () => {
   }
 
   function handleToggleConversationSelection(conversationId) {
-    setSelectedConversationIds(prev => {
-      if (prev.includes(conversationId)) {
-        return prev.filter(id => id !== conversationId);
-      } else {
-        return [...prev, conversationId];
-      }
-    });
+    setSelectedConversationIds(prev =>
+      prev.includes(conversationId)
+        ? prev.filter(id => id !== conversationId)
+        : [...prev, conversationId]
+    );
   }
 
   async function handleDeleteSelectedConversations() {
@@ -904,13 +780,9 @@ const App = () => {
       for (const conversationId of selectedConversationIds) {
         await deleteConversation(firebaseUser.uid, conversationId);
       }
-
-      // Exit select mode and refresh conversations
       setIsSelectMode(false);
       setSelectedConversationIds([]);
-      await loadConversations();
     } catch (err) {
-      console.error('Error deleting conversations:', err);
       setError(`Failed to delete conversations: ${err.message}`);
     } finally {
       setLoading(false);
@@ -957,10 +829,9 @@ const App = () => {
 
         <button
           onClick={() => setActiveTab('grade')}
-          className={`w-full h-12 flex items-center justify-center transition-colors ${activeTab === 'grade'
-            ? 'text-blue-600'
-            : 'text-gray-600 hover:bg-gray-100'
-            }`}
+          className={`w-full h-12 flex items-center justify-center transition-colors ${
+            activeTab === 'grade' ? 'text-blue-600' : 'text-gray-600 hover:bg-gray-100'
+          }`}
           title="Grade"
         >
           <Check className="w-4 h-4" />
@@ -968,10 +839,9 @@ const App = () => {
 
         <button
           onClick={() => setActiveTab('grades')}
-          className={`w-full h-12 flex items-center justify-center transition-colors ${activeTab === 'grades'
-            ? 'text-blue-600'
-            : 'text-gray-600 hover:bg-gray-100'
-            }`}
+          className={`w-full h-12 flex items-center justify-center transition-colors ${
+            activeTab === 'grades' ? 'text-blue-600' : 'text-gray-600 hover:bg-gray-100'
+          }`}
           title="Grades"
         >
           <ClipboardList className="w-4 h-4" />
@@ -979,10 +849,9 @@ const App = () => {
 
         <button
           onClick={() => setActiveTab('analytics')}
-          className={`w-full h-12 flex items-center justify-center transition-colors ${activeTab === 'analytics'
-            ? 'text-blue-600'
-            : 'text-gray-600 hover:bg-gray-100'
-            }`}
+          className={`w-full h-12 flex items-center justify-center transition-colors ${
+            activeTab === 'analytics' ? 'text-blue-600' : 'text-gray-600 hover:bg-gray-100'
+          }`}
           title="Analytics"
         >
           <BarChart3 className="w-4 h-4" />
@@ -990,10 +859,9 @@ const App = () => {
 
         <button
           onClick={() => setActiveTab('assistant')}
-          className={`w-full h-12 flex items-center justify-center transition-colors ${activeTab === 'assistant'
-            ? 'text-blue-600'
-            : 'text-gray-600 hover:bg-gray-100'
-            }`}
+          className={`w-full h-12 flex items-center justify-center transition-colors ${
+            activeTab === 'assistant' ? 'text-blue-600' : 'text-gray-600 hover:bg-gray-100'
+          }`}
           title="Assistant"
         >
           <MessageSquare className="w-4 h-4" />
@@ -1001,10 +869,9 @@ const App = () => {
 
         <button
           onClick={() => setActiveTab('settings')}
-          className={`w-full h-12 flex items-center justify-center transition-colors ${activeTab === 'settings'
-            ? 'text-blue-600'
-            : 'text-gray-600 hover:bg-gray-100'
-            }`}
+          className={`w-full h-12 flex items-center justify-center transition-colors ${
+            activeTab === 'settings' ? 'text-blue-600' : 'text-gray-600 hover:bg-gray-100'
+          }`}
           title="Settings"
         >
           <Settings className="w-4 h-4" />
@@ -1032,7 +899,6 @@ const App = () => {
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto overflow-x-hidden">
-          {/* GRADE TAB */}
           {activeTab === 'grade' && (
             <GradeTab
               courses={courses}
@@ -1059,7 +925,6 @@ const App = () => {
             />
           )}
 
-          {/* GRADES TAB */}
           {activeTab === 'grades' && (
             <GradesTab
               courses={courses}
@@ -1067,11 +932,14 @@ const App = () => {
               grades={gradesHistory}
               loading={isLoadingGrades}
               onClassSelect={handleClassSelectForGrades}
-              onGradeClick={handleGradeCardClick}
+              isSelectMode={isGradeSelectMode}
+              selectedGradeIds={selectedGradeIds}
+              onToggleSelectMode={handleToggleGradeSelectMode}
+              onToggleGradeSelection={handleToggleGradeSelection}
+              onDeleteSelectedGrades={handleDeleteSelectedGrades}
             />
           )}
 
-          {/* ANALYTICS TAB */}
           {activeTab === 'analytics' && (
             <AnalyticsTab
               courses={courses}
@@ -1080,7 +948,6 @@ const App = () => {
             />
           )}
 
-          {/* ASSISTANT TAB */}
           {activeTab === 'assistant' && (
             <AssistantTab
               conversations={conversations}
@@ -1103,7 +970,6 @@ const App = () => {
             />
           )}
 
-          {/* SETTINGS TAB */}
           {activeTab === 'settings' && (
             <SettingsTab
               gradingStyle={gradingStyle}
@@ -1117,6 +983,12 @@ const App = () => {
       </div>
     </div>
   );
-};
+}
+
+const App = () => (
+  <ToastProvider>
+    <AppContent />
+  </ToastProvider>
+);
 
 export default App;
