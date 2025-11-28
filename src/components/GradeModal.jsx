@@ -1,4 +1,5 @@
 import { X, Check } from 'lucide-react';
+import LatexRenderer from './LatexRenderer';
 
 /**
  * Modal component to display full grade details
@@ -141,14 +142,14 @@ export default function GradeModal({ isOpen, onClose, grade }) {
                 {/* Student Answer */}
                 <div className="text-sm text-gray-700 mb-2">
                   <span className="font-medium">Student Answer: </span>
-                  {question.studentAnswer}
+                  <LatexRenderer className="inline-block">{question.studentAnswer}</LatexRenderer>
                 </div>
 
                 {/* Correct Answer */}
                 {!question.isCorrect && question.correctAnswer && (
                   <div className="text-sm text-gray-700 mb-3">
                     <span className="font-medium">Correct Answer: </span>
-                    {question.correctAnswer}
+                    <LatexRenderer className="inline-block">{question.correctAnswer}</LatexRenderer>
                   </div>
                 )}
 

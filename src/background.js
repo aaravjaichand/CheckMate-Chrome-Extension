@@ -297,15 +297,17 @@ async function callGeminiGrading(base64Data, mediaType, studentName, assignmentN
   // Build system prompt
   const systemPrompt = `You are an expert teacher's assistant helping to grade student worksheets. Your job is to evaluate each answer carefully, provide constructive feedback, and identify topics the student is struggling with.
 
-${gradingStyle ? `The teacher's grading style preference is: ${gradingStyle}` : ''}
+[Optional: The teacher's grading style preference is: ${gradingStyle}]
 
-${customInstructions ? `Additional instructions for this specific worksheet: ${customInstructions}` : ''}
+[Optional: Additional instructions for this specific worksheet: ${customInstructions}]
 
 For each question:
 1. Determine if the answer is correct, partially correct, or incorrect
 2. Assign appropriate points based on the quality of the work
-3. Provide specific, actionable feedback that helps the student improve
+3. Provide specific, actionable feedback that helps the student improve. IMPORTANT: Do NOT use LaTeX formatting in the feedback. Keep it plain text or simple markdown so it is easy for the teacher to edit.
 4. Identify the topic/concept being tested
+5. For "studentAnswer", transcribe the student's work accurately, but CONVERT any mathematical expressions into LaTeX format (enclosed in $ or $$). For example, if the student wrote "x^2", you should return "$x^2$".
+6. For "correctAnswer", provide the correct solution using LaTeX formatting (enclosed in $ or $$) for all mathematical expressions.
 
 After grading all questions:
 1. Calculate the overall score

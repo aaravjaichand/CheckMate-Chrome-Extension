@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Check, X, Edit2, Save } from 'lucide-react';
+import LatexRenderer from './LatexRenderer';
 
 /**
  * Component to display and edit grading results
@@ -164,13 +165,13 @@ export default function GradingResults({ gradingResult, onResultsChange }) {
             {/* Student Answer */}
             <div className="text-sm text-gray-700 mb-2">
               <span className="font-medium">Student Answer: </span>
-              {question.studentAnswer}
+              <LatexRenderer className="inline-block">{question.studentAnswer}</LatexRenderer>
             </div>
 
             {/* Correct Answer */}
             <div className="text-sm text-gray-700 mb-3">
               <span className="font-medium">Correct Answer: </span>
-              {question.correctAnswer}
+              <LatexRenderer className="inline-block">{question.correctAnswer}</LatexRenderer>
             </div>
 
             {/* Points */}

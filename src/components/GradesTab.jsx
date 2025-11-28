@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ClipboardList, RefreshCw, X, Check, ChevronLeft } from 'lucide-react';
+import LatexRenderer from './LatexRenderer';
 
 /**
  * GradesTab component - Displays history of saved grades
@@ -251,9 +252,9 @@ export default function GradesTab({
 
                       <div className="space-y-1 text-xs">
                         <p><span className="font-medium">Q:</span> {question.questionText}</p>
-                        <p><span className="font-medium">A:</span> {question.studentAnswer}</p>
+                        <p><span className="font-medium">A:</span> <LatexRenderer className="inline-block">{question.studentAnswer}</LatexRenderer></p>
                         {!question.isCorrect && question.correctAnswer && (
-                          <p><span className="font-medium">✓:</span> {question.correctAnswer}</p>
+                          <p><span className="font-medium">✓:</span> <LatexRenderer className="inline-block">{question.correctAnswer}</LatexRenderer></p>
                         )}
                         {question.feedback && (
                           <p className="text-gray-600 italic">💭 {question.feedback}</p>
