@@ -532,12 +532,32 @@ function AppContent() {
         })
       ]);
 
+      // Sync grade to Google Classroom if enabled
+      if (syncToClassroom && api) {
+        try {
+          await api.updateSubmissionGrade(
+            selectedCourse.id,
+            selectedAssignment.id,
+            selectedSubmission.id,
+            gradingResult.overallScore
+          );
+        } catch (err) {
+          // Show warning but don't fail the save operation
+          toast.error(`Grade saved locally but failed to sync to Google Classroom: ${err.message}`);
+          setGradingResult(null);
+          setRawAIResponse(null);
+          setCustomInstructions('');
+          setSyncToClassroom(false);
+          return;
+        }
+      }
+
       setGradingResult(null);
       setRawAIResponse(null);
       setCustomInstructions('');
       setSyncToClassroom(false);
 
-      toast.success('Grades saved successfully!');
+      toast.success(syncToClassroom ? 'Grades saved and synced to Google Classroom!' : 'Grades saved successfully!');
     } catch (err) {
       setError(`Failed to save grades: ${err.message}`);
     } finally {

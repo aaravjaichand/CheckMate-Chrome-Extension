@@ -77,6 +77,25 @@ export class GoogleClassroomAPI {
   }
 
   /**
+   * Update the grade for a student submission in Google Classroom
+   * @param {string} courseId - The course ID
+   * @param {string} courseWorkId - The assignment/coursework ID
+   * @param {string} submissionId - The submission ID
+   * @param {number} grade - The grade to assign
+   * @returns {Promise<Object>} The updated submission object
+   */
+  async updateSubmissionGrade(courseId, courseWorkId, submissionId, grade) {
+    const endpoint = `courses/${courseId}/courseWork/${courseWorkId}/studentSubmissions/${submissionId}?updateMask=draftGrade,assignedGrade`;
+    return this.apiCall(endpoint, {
+      method: 'PATCH',
+      body: {
+        draftGrade: grade,
+        assignedGrade: grade
+      }
+    });
+  }
+
+  /**
    * Get attachments from a submission
    * @param {Object} submission - The submission object from Google Classroom
    * @returns {Array} Array of attachment objects with URLs
