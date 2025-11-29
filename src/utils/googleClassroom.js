@@ -35,7 +35,15 @@ export class GoogleClassroomAPI {
         await chrome.storage.local.remove('accessToken');
         throw new Error('SESSION_EXPIRED');
       }
-      throw new Error(`API Error: ${response.status}`);
+      // Get detailed error message from response
+      let errorDetail = '';
+      try {
+        const errorBody = await response.json();
+        errorDetail = errorBody.error?.message || JSON.stringify(errorBody);
+      } catch {
+        errorDetail = await response.text().catch(() => '');
+      }
+      throw new Error(`API Error ${response.status}: ${errorDetail}`);
     }
 
     return response.json();
