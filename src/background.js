@@ -43,7 +43,7 @@ async function handleAuthentication() {
   authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('response_type', 'id_token token');
   authUrl.searchParams.set('scope', scopes);
-  authUrl.searchParams.set('prompt', 'select_account');
+  authUrl.searchParams.set('prompt', 'consent');
 
   const redirectUrl = await new Promise((resolve, reject) => {
     chrome.identity.launchWebAuthFlow(
