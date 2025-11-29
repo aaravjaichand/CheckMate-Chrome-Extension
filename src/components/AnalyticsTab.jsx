@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { getClassAnalytics, getStudentAnalytics, getTeacherSettings, auth } from '../utils/firebase';
-import { BarChart3, TrendingUp, Users, AlertCircle, BookOpen, ChevronRight, ArrowLeft } from 'lucide-react';
+import { getClassAnalytics, getStudentAnalytics, getTeacherSettings, saveLessonPlan, getLessonPlansByClass, auth } from '../utils/firebase';
+import { BarChart3, TrendingUp, Users, AlertCircle, BookOpen, ChevronRight, ArrowLeft, Sparkles, RefreshCw, FileText, Clock } from 'lucide-react';
+import StudentChart from './StudentChart';
+import LessonPlanModal from './LessonPlanModal';
 
 /**
  * AnalyticsTab component - Displays analytics and insights for classes
@@ -12,10 +14,36 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
   const [studentAnalytics, setStudentAnalytics] = useState(null);
   const [loadingStudent, setLoadingStudent] = useState(false);
   const [threshold, setThreshold] = useState(80);
+  
+  // Lesson plan state
+  const [lessonPlan, setLessonPlan] = useState(null);
+  const [isLessonPlanModalOpen, setIsLessonPlanModalOpen] = useState(false);
+  const [isGeneratingLessonPlan, setIsGeneratingLessonPlan] = useState(false);
+  const [lessonPlanError, setLessonPlanError] = useState(null);
+  const [savedLessonPlans, setSavedLessonPlans] = useState([]);
 
   useEffect(() => {
     loadSettings();
   }, []);
+
+  // Load lesson plans when class changes
+  useEffect(() => {
+    async function loadLessonPlans() {
+      if (selectedClass && auth.currentUser) {
+        try {
+          const plans = await getLessonPlansByClass(selectedClass.id, auth.currentUser.uid);
+          setSavedLessonPlans(plans);
+        } catch (error) {
+          // Silently fail - Firestore rules may not be configured yet
+          console.warn('Could not load lesson plans:', error.message);
+          setSavedLessonPlans([]);
+        }
+      } else {
+        setSavedLessonPlans([]);
+      }
+    }
+    loadLessonPlans();
+  }, [selectedClass]);
 
   useEffect(() => {
     if (selectedClass) {
@@ -64,6 +92,87 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
     } finally {
       setLoadingStudent(false);
     }
+  }
+
+  async function handleGenerateLessonPlan() {
+    if (!analytics || !selectedClass || !auth.currentUser) return;
+    
+    setIsGeneratingLessonPlan(true);
+    setLessonPlanError(null);
+    
+    try {
+      // Prepare struggling topics data
+      const strugglingTopicsEntries = analytics.commonStrugglingTopics 
+        ? Object.entries(analytics.commonStrugglingTopics).sort(([, a], [, b]) => b - a).slice(0, 5)
+        : [];
+      
+      const strugglingTopics = strugglingTopicsEntries.map(([topic]) => topic);
+      const topicCounts = Object.fromEntries(strugglingTopicsEntries);
+      
+      // Count students needing support
+      const studentsNeedingSupport = sortedStudents.filter(s => s.averageScore < threshold).length;
+      
+      const analyticsData = {
+        className: selectedClass.name,
+        classAverage: Math.round(analytics.averageGrade || 0),
+        totalStudents: sortedStudents.length,
+        studentsNeedingSupport,
+        strugglingTopics,
+        topicCounts
+      };
+      
+      const response = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          { action: 'generateLessonPlan', data: analyticsData },
+          (res) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else if (res?.success) {
+              resolve(res.result);
+            } else {
+              reject(new Error(res?.error || 'Failed to generate lesson plan'));
+            }
+          }
+        );
+      });
+      
+      // Show the lesson plan immediately
+      setLessonPlan(response);
+      setIsLessonPlanModalOpen(true);
+      
+      // Try to save to Firebase (but don't block on it)
+      try {
+        await saveLessonPlan({
+          classId: selectedClass.id,
+          className: selectedClass.name,
+          teacherId: auth.currentUser.uid,
+          analyticsSnapshot: {
+            classAverage: analyticsData.classAverage,
+            totalStudents: analyticsData.totalStudents,
+            studentsNeedingSupport: analyticsData.studentsNeedingSupport,
+            strugglingTopics: analyticsData.strugglingTopics
+          },
+          plan: response
+        });
+        
+        // Reload lesson plans after successful save
+        const plans = await getLessonPlansByClass(selectedClass.id, auth.currentUser.uid);
+        setSavedLessonPlans(plans);
+      } catch (saveError) {
+        console.warn('Could not save lesson plan to Firebase:', saveError.message);
+        // Don't show error to user - the plan was still generated successfully
+      }
+    } catch (error) {
+      console.error('Failed to generate lesson plan:', error);
+      setLessonPlanError(error.message || 'Failed to generate lesson plan. Please try again.');
+    } finally {
+      setIsGeneratingLessonPlan(false);
+    }
+  }
+
+  function handleViewSavedLessonPlan(savedPlan) {
+    setLessonPlan(savedPlan.plan);
+    setIsLessonPlanModalOpen(true);
   }
 
   const getSortedStudents = () => {
@@ -236,6 +345,14 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
               </div>
             </div>
 
+            {/* Score Distribution Chart */}
+            {sortedStudents.length > 0 && (
+              <StudentChart 
+                students={sortedStudents} 
+                onStudentClick={(studentId) => setSelectedStudentId(studentId)} 
+              />
+            )}
+
             {sortedStudents.length > 0 && (
               <div className="grid grid-cols-1 gap-4">
                 <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
@@ -309,7 +426,92 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
               ) : (
                 <p className="text-sm text-gray-500 italic">No data available yet.</p>
               )}
+
+              {/* Generate Lesson Plan Button */}
+              <button
+                onClick={handleGenerateLessonPlan}
+                disabled={isGeneratingLessonPlan || !analytics.commonStrugglingTopics || Object.keys(analytics.commonStrugglingTopics).length === 0}
+                className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+              >
+                {isGeneratingLessonPlan ? (
+                  <>
+                    <RefreshCw size={16} className="animate-spin" />
+                    <span>Generating Lesson Plan...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={16} />
+                    <span>Generate Lesson Plan</span>
+                  </>
+                )}
+              </button>
+
+              {/* Error Display */}
+              {lessonPlanError && (
+                <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <p className="text-sm text-red-700">{lessonPlanError}</p>
+                </div>
+              )}
             </div>
+
+            {/* Saved Lesson Plans Section */}
+            {savedLessonPlans.length > 0 && (
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-gray-200 bg-purple-50">
+                  <div className="flex items-center gap-2">
+                    <FileText size={18} className="text-purple-600" />
+                    <h3 className="font-semibold text-gray-900">Saved Lesson Plans</h3>
+                    <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+                      {savedLessonPlans.length}
+                    </span>
+                  </div>
+                </div>
+                <div className="divide-y divide-gray-100 max-h-64 overflow-y-auto">
+                  {savedLessonPlans.map((savedPlan) => (
+                    <div
+                      key={savedPlan.id}
+                      onClick={() => handleViewSavedLessonPlan(savedPlan)}
+                      className="p-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <h4 className="text-sm font-medium text-gray-900 truncate">
+                            {savedPlan.plan?.title || 'Untitled Lesson Plan'}
+                          </h4>
+                          <div className="flex items-center gap-3 mt-1">
+                            <span className="flex items-center gap-1 text-xs text-gray-500">
+                              <Clock size={12} />
+                              {savedPlan.plan?.duration || 'N/A'}
+                            </span>
+                            <span className="text-xs text-gray-400">
+                              {new Date(savedPlan.createdAt).toLocaleDateString()}
+                            </span>
+                          </div>
+                          {savedPlan.analyticsSnapshot?.strugglingTopics?.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {savedPlan.analyticsSnapshot.strugglingTopics.slice(0, 3).map((topic, idx) => (
+                                <span
+                                  key={idx}
+                                  className="text-xs px-2 py-0.5 bg-orange-50 text-orange-600 rounded-full"
+                                >
+                                  {topic}
+                                </span>
+                              ))}
+                              {savedPlan.analyticsSnapshot.strugglingTopics.length > 3 && (
+                                <span className="text-xs text-gray-400">
+                                  +{savedPlan.analyticsSnapshot.strugglingTopics.length - 3} more
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <ChevronRight size={16} className="text-gray-400 flex-shrink-0 mt-1" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="p-4 border-b border-gray-200">
@@ -361,6 +563,13 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
           <p>Select a class to view analytics</p>
         </div>
       )}
+
+      {/* Lesson Plan Modal */}
+      <LessonPlanModal
+        lessonPlan={lessonPlan}
+        isOpen={isLessonPlanModalOpen}
+        onClose={() => setIsLessonPlanModalOpen(false)}
+      />
     </div>
   );
 }

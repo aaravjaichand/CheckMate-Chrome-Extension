@@ -134,6 +134,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
+// Handle lesson plan generation requests
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'generateLessonPlan') {
+    handleGenerateLessonPlan(request.data)
+      .then(result => sendResponse({ success: true, result }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+});
+
 /**
  * Extract file ID from Google Drive URL
  */
@@ -397,4 +407,159 @@ async function handleGradeWorksheet(data) {
     gradingStyle,
     customInstructions
   );
+}
+
+/**
+ * Call Gemini API to generate a lesson plan based on class analytics
+ */
+async function callGeminiLessonPlan(analyticsData) {
+  const modelId = 'gemini-2.5-pro';
+
+  const { className, classAverage, totalStudents, studentsNeedingSupport, strugglingTopics, topicCounts } = analyticsData;
+
+  const systemPrompt = `You are an expert curriculum designer and educational consultant. Your task is to create targeted, actionable lesson plans based on student performance data.
+
+You will receive class analytics including:
+- Overall class performance metrics
+- Topics students are struggling with (and how many students struggle with each)
+- Number of students needing additional support
+
+Create a lesson plan that:
+1. Directly addresses the most common struggling topics
+2. Includes differentiation strategies for struggling and advanced students
+3. Uses evidence-based teaching strategies
+4. Provides realistic time estimates
+5. Includes formative assessment to check understanding
+
+The lesson plan should be practical and immediately usable by teachers.`;
+
+  const lessonPlanTool = {
+    name: "create_lesson_plan",
+    description: "Create a structured lesson plan based on class analytics data",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        title: {
+          type: "STRING",
+          description: "A descriptive title for the lesson plan"
+        },
+        duration: {
+          type: "STRING",
+          description: "Recommended duration (e.g., '45 minutes', '1 hour')"
+        },
+        overview: {
+          type: "STRING",
+          description: "Brief overview of what the lesson covers and why"
+        },
+        objectives: {
+          type: "ARRAY",
+          items: { type: "STRING" },
+          description: "2-4 clear learning objectives starting with 'Students will be able to...'"
+        },
+        materials: {
+          type: "ARRAY",
+          items: { type: "STRING" },
+          description: "List of materials and resources needed"
+        },
+        activities: {
+          type: "ARRAY",
+          items: {
+            type: "OBJECT",
+            properties: {
+              name: { type: "STRING", description: "Activity name" },
+              duration: { type: "STRING", description: "Time estimate" },
+              description: { type: "STRING", description: "Detailed description of the activity" }
+            },
+            required: ["name", "duration", "description"]
+          },
+          description: "Sequence of learning activities"
+        },
+        differentiation: {
+          type: "OBJECT",
+          properties: {
+            struggling: { type: "STRING", description: "Strategies for students who need extra support" },
+            advanced: { type: "STRING", description: "Extension activities for advanced students" }
+          },
+          required: ["struggling", "advanced"]
+        },
+        assessment: {
+          type: "STRING",
+          description: "Formative assessment strategy to check understanding"
+        },
+        teacherNotes: {
+          type: "STRING",
+          description: "Additional tips and suggestions for the teacher"
+        }
+      },
+      required: ["title", "duration", "overview", "objectives", "materials", "activities", "differentiation", "assessment"]
+    }
+  };
+
+  // Format struggling topics for the prompt
+  const topicsText = strugglingTopics.length > 0
+    ? strugglingTopics.map((topic, i) => `${i + 1}. ${topic} (${topicCounts[topic] || 'multiple'} students)`).join('\n')
+    : 'No specific struggling topics identified';
+
+  const userPrompt = `Please create a targeted lesson plan for the following class:
+
+**Class:** ${className}
+**Class Average:** ${classAverage}%
+**Total Students:** ${totalStudents}
+**Students Needing Support (below threshold):** ${studentsNeedingSupport}
+
+**Top Struggling Topics:**
+${topicsText}
+
+Based on this data, create a lesson plan that addresses the most critical struggling topics while keeping all students engaged. Focus especially on ${strugglingTopics[0] || 'foundational concepts'} as it affects the most students.
+
+Use the create_lesson_plan tool to return a structured lesson plan.`;
+
+  const requestBody = {
+    contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    tools: [{ functionDeclarations: [lessonPlanTool] }],
+    toolConfig: {
+      functionCallingConfig: {
+        mode: "ANY",
+        allowedFunctionNames: ["create_lesson_plan"]
+      }
+    },
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 4096
+    }
+  };
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': GEMINI_API_KEY
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Gemini API error (${response.status}): ${errorText}`);
+  }
+
+  const result = await response.json();
+  const candidate = result.candidates?.[0];
+  const functionCall = candidate?.content?.parts?.find(p => p.functionCall)?.functionCall;
+
+  if (!functionCall || functionCall.name !== 'create_lesson_plan') {
+    throw new Error('Failed to get structured lesson plan from Gemini');
+  }
+
+  return functionCall.args;
+}
+
+/**
+ * Main handler for generating lesson plan
+ */
+async function handleGenerateLessonPlan(data) {
+  return await callGeminiLessonPlan(data);
 }

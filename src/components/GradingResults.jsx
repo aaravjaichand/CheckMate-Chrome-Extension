@@ -81,7 +81,7 @@ export default function GradingResults({ gradingResult, onResultsChange }) {
   return (
     <div className="space-y-4">
       {/* Overall Score */}
-      <div className="bg-gradient-to-r from-green-50 to-blue-50 border border-green-200 rounded-lg p-4">
+      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
         <div className="text-center">
           <div className="text-sm text-gray-600 mb-1">Overall Score</div>
           <input

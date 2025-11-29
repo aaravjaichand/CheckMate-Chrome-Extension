@@ -668,4 +668,88 @@ export async function recalculateStudentAnalytics(studentId, classId, teacherId)
   });
 }
 
+/**
+ * Save a generated lesson plan to database
+ * @param {Object} lessonPlanData - Lesson plan data
+ * @returns {Promise<string>} The generated lessonPlanId
+ */
+export async function saveLessonPlan(lessonPlanData) {
+  const lessonPlansRef = collection(db, 'lessonPlans');
+  const docRef = await addDoc(lessonPlansRef, {
+    ...lessonPlanData,
+    createdAt: Date.now()
+  });
+  return docRef.id;
+}
+
+/**
+ * Get all lesson plans for a class
+ * @param {string} classId - Class ID
+ * @param {string} teacherId - Teacher ID
+ * @returns {Promise<Array>} Array of lesson plan objects
+ */
+export async function getLessonPlansByClass(classId, teacherId) {
+  const lessonPlansRef = collection(db, 'lessonPlans');
+  const lessonPlansQuery = query(
+    lessonPlansRef,
+    where('classId', '==', classId),
+    where('teacherId', '==', teacherId),
+    orderBy('createdAt', 'desc')
+  );
+  const snapshot = await getDocs(lessonPlansQuery);
+
+  const lessonPlans = [];
+  snapshot.forEach((doc) => {
+    const data = doc.data();
+    if (!data.deleted) {
+      lessonPlans.push({ id: doc.id, ...data });
+    }
+  });
+  return lessonPlans;
+}
+
+/**
+ * Listen to lesson plans for a class in real-time
+ * @param {string} classId - Class ID
+ * @param {string} teacherId - Teacher ID
+ * @param {Function} callback - Callback with updated lesson plans
+ * @returns {Function} Unsubscribe function
+ */
+export function listenToLessonPlansByClass(classId, teacherId, callback) {
+  const lessonPlansRef = collection(db, 'lessonPlans');
+  const lessonPlansQuery = query(
+    lessonPlansRef,
+    where('classId', '==', classId),
+    where('teacherId', '==', teacherId),
+    orderBy('createdAt', 'desc')
+  );
+
+  return onSnapshot(lessonPlansQuery, (snapshot) => {
+    if (snapshot.empty) {
+      callback([]);
+      return;
+    }
+
+    const lessonPlans = [];
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      if (!data.deleted) {
+        lessonPlans.push({ id: doc.id, ...data });
+      }
+    });
+    callback(lessonPlans);
+  }, (error) => {
+    console.warn('Firestore lesson plans listener error (will auto-retry):', error?.code || 'unknown');
+  });
+}
+
+/**
+ * Delete a lesson plan (soft delete)
+ * @param {string} lessonPlanId - Lesson Plan ID
+ */
+export async function deleteLessonPlan(lessonPlanId) {
+  const lessonPlanRef = doc(db, 'lessonPlans', lessonPlanId);
+  await updateDoc(lessonPlanRef, { deleted: true, deletedAt: Date.now() });
+}
+
 export { auth, db };

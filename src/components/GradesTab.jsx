@@ -213,7 +213,7 @@ export default function GradesTab({
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 space-y-3">
-              <div className="bg-gradient-to-r from-green-50 to-blue-50 border border-green-200 rounded p-3">
+              <div className="bg-green-50 border border-green-200 rounded p-3">
                 <div className="text-center">
                   <div className="text-xs text-gray-600 mb-1">Overall Score</div>
                   <div className="text-3xl font-bold text-gray-900">
