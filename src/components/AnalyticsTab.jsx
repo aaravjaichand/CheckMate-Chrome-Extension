@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { getClassAnalytics, getStudentAnalytics, getTeacherSettings, saveLessonPlan, getLessonPlansByClass, auth } from '../utils/firebase';
-import { BarChart3, TrendingUp, Users, AlertCircle, BookOpen, ChevronRight, ArrowLeft, Sparkles, RefreshCw, FileText, Clock } from 'lucide-react';
+import { getClassAnalytics, getStudentAnalytics, getTeacherSettings, saveLessonPlan, getLessonPlansByClass, deleteLessonPlan, auth } from '../utils/firebase';
+import { BarChart3, TrendingUp, Users, AlertCircle, BookOpen, ChevronRight, ArrowLeft, Sparkles, RefreshCw, FileText, Clock, X } from 'lucide-react';
 import StudentChart from './StudentChart';
 import LessonPlanModal from './LessonPlanModal';
 
@@ -21,6 +21,10 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
   const [isGeneratingLessonPlan, setIsGeneratingLessonPlan] = useState(false);
   const [lessonPlanError, setLessonPlanError] = useState(null);
   const [savedLessonPlans, setSavedLessonPlans] = useState([]);
+  
+  // Lesson plan selection state
+  const [isLessonPlanSelectMode, setIsLessonPlanSelectMode] = useState(false);
+  const [selectedLessonPlanIds, setSelectedLessonPlanIds] = useState([]);
 
   useEffect(() => {
     loadSettings();
@@ -173,6 +177,38 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
   function handleViewSavedLessonPlan(savedPlan) {
     setLessonPlan(savedPlan.plan);
     setIsLessonPlanModalOpen(true);
+  }
+
+  function handleToggleLessonPlanSelectMode() {
+    setIsLessonPlanSelectMode(!isLessonPlanSelectMode);
+    setSelectedLessonPlanIds([]);
+  }
+
+  function handleToggleLessonPlanSelection(planId) {
+    setSelectedLessonPlanIds(prev =>
+      prev.includes(planId)
+        ? prev.filter(id => id !== planId)
+        : [...prev, planId]
+    );
+  }
+
+  async function handleDeleteSelectedLessonPlans() {
+    if (selectedLessonPlanIds.length === 0) return;
+
+    try {
+      for (const planId of selectedLessonPlanIds) {
+        await deleteLessonPlan(planId);
+      }
+      // Refresh the lesson plans list
+      if (selectedClass && auth.currentUser) {
+        const plans = await getLessonPlansByClass(selectedClass.id, auth.currentUser.uid);
+        setSavedLessonPlans(plans);
+      }
+      setIsLessonPlanSelectMode(false);
+      setSelectedLessonPlanIds([]);
+    } catch (error) {
+      console.error('Failed to delete lesson plans:', error);
+    }
   }
 
   const getSortedStudents = () => {
@@ -457,7 +493,7 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
             {/* Saved Lesson Plans Section */}
             {savedLessonPlans.length > 0 && (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                <div className="p-4 border-b border-gray-200 bg-purple-50">
+                <div className="p-4 border-b border-gray-200 bg-purple-50 flex justify-between items-center">
                   <div className="flex items-center gap-2">
                     <FileText size={18} className="text-purple-600" />
                     <h3 className="font-semibold text-gray-900">Saved Lesson Plans</h3>
@@ -465,47 +501,95 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
                       {savedLessonPlans.length}
                     </span>
                   </div>
+                  <div className="flex items-center gap-2">
+                    {isLessonPlanSelectMode ? (
+                      <>
+                        <button
+                          onClick={handleDeleteSelectedLessonPlans}
+                          disabled={selectedLessonPlanIds.length === 0}
+                          className="px-3 py-1 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Delete selected"
+                        >
+                          Delete
+                        </button>
+                        <button
+                          onClick={handleToggleLessonPlanSelectMode}
+                          className="p-1.5 hover:bg-purple-100 rounded-lg transition-colors"
+                          title="Cancel"
+                        >
+                          <X size={18} className="text-gray-600" />
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={handleToggleLessonPlanSelectMode}
+                        className="px-3 py-1 text-sm font-medium text-purple-600 hover:bg-purple-100 rounded-lg transition-colors"
+                        title="Select lesson plans"
+                      >
+                        Select
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="divide-y divide-gray-100 max-h-64 overflow-y-auto">
                   {savedLessonPlans.map((savedPlan) => (
                     <div
                       key={savedPlan.id}
-                      onClick={() => handleViewSavedLessonPlan(savedPlan)}
+                      onClick={() => {
+                        if (isLessonPlanSelectMode) {
+                          handleToggleLessonPlanSelection(savedPlan.id);
+                        } else {
+                          handleViewSavedLessonPlan(savedPlan);
+                        }
+                      }}
                       className="p-4 hover:bg-gray-50 cursor-pointer transition-colors"
                     >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1 min-w-0">
-                          <h4 className="text-sm font-medium text-gray-900 truncate">
-                            {savedPlan.plan?.title || 'Untitled Lesson Plan'}
-                          </h4>
-                          <div className="flex items-center gap-3 mt-1">
-                            <span className="flex items-center gap-1 text-xs text-gray-500">
-                              <Clock size={12} />
-                              {savedPlan.plan?.duration || 'N/A'}
-                            </span>
-                            <span className="text-xs text-gray-400">
-                              {new Date(savedPlan.createdAt).toLocaleDateString()}
-                            </span>
-                          </div>
-                          {savedPlan.analyticsSnapshot?.strugglingTopics?.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-2">
-                              {savedPlan.analyticsSnapshot.strugglingTopics.slice(0, 3).map((topic, idx) => (
-                                <span
-                                  key={idx}
-                                  className="text-xs px-2 py-0.5 bg-orange-50 text-orange-600 rounded-full"
-                                >
-                                  {topic}
-                                </span>
-                              ))}
-                              {savedPlan.analyticsSnapshot.strugglingTopics.length > 3 && (
-                                <span className="text-xs text-gray-400">
-                                  +{savedPlan.analyticsSnapshot.strugglingTopics.length - 3} more
-                                </span>
-                              )}
+                      <div className="flex items-start gap-3">
+                        {isLessonPlanSelectMode && (
+                          <input
+                            type="checkbox"
+                            checked={selectedLessonPlanIds.includes(savedPlan.id)}
+                            onChange={() => handleToggleLessonPlanSelection(savedPlan.id)}
+                            className="w-4 h-4 mt-0.5 rounded cursor-pointer"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        )}
+                        <div className="flex-1 min-w-0 flex items-start justify-between">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-sm font-medium text-gray-900 truncate">
+                              {savedPlan.plan?.title || 'Untitled Lesson Plan'}
+                            </h4>
+                            <div className="flex items-center gap-3 mt-1">
+                              <span className="flex items-center gap-1 text-xs text-gray-500">
+                                <Clock size={12} />
+                                {savedPlan.plan?.duration || 'N/A'}
+                              </span>
+                              <span className="text-xs text-gray-400">
+                                {new Date(savedPlan.createdAt).toLocaleDateString()}
+                              </span>
                             </div>
+                            {savedPlan.analyticsSnapshot?.strugglingTopics?.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-2">
+                                {savedPlan.analyticsSnapshot.strugglingTopics.slice(0, 3).map((topic, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="text-xs px-2 py-0.5 bg-orange-50 text-orange-600 rounded-full"
+                                  >
+                                    {topic}
+                                  </span>
+                                ))}
+                                {savedPlan.analyticsSnapshot.strugglingTopics.length > 3 && (
+                                  <span className="text-xs text-gray-400">
+                                    +{savedPlan.analyticsSnapshot.strugglingTopics.length - 3} more
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {!isLessonPlanSelectMode && (
+                            <ChevronRight size={16} className="text-gray-400 flex-shrink-0 mt-1" />
                           )}
                         </div>
-                        <ChevronRight size={16} className="text-gray-400 flex-shrink-0 mt-1" />
                       </div>
                     </div>
                   ))}
