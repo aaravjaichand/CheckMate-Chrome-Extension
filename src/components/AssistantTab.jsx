@@ -1,7 +1,17 @@
 import { useEffect, useRef } from 'react';
-import { RefreshCw, Send, Square, ChevronLeft } from 'lucide-react';
+import { RefreshCw, Send, Square, ChevronLeft, Search, Sparkles } from 'lucide-react';
 import MessageRenderer from './MessageRenderer';
 import ConversationsList from './ConversationsList';
+
+/**
+ * Quick action chip prompts for common teacher queries
+ */
+const QUICK_ACTIONS = [
+  { label: 'Struggling students', prompt: 'Which students are struggling and need extra help?' },
+  { label: 'Common mistakes', prompt: 'What are the most common topics students struggle with?' },
+  { label: 'Class performance', prompt: 'How is my class performing overall? Give me a summary.' },
+  { label: 'Improvement tips', prompt: 'What strategies can I use to help struggling students improve?' }
+];
 
 /**
  * AssistantTab component - AI chatbot interface with conversation history
@@ -11,6 +21,7 @@ import ConversationsList from './ConversationsList';
  * @param {Array} props.messages - Array of message objects with {role, content}
  * @param {string} props.inputMessage - Current input message
  * @param {boolean} props.isSendingMessage - Whether a message is being sent
+ * @param {boolean} props.isSearchingData - Whether RAG is searching data
  * @param {boolean} props.isLoadingConversations - Whether conversations are loading
  * @param {Function} props.onInputChange - Handler for input change
  * @param {Function} props.onSendMessage - Handler for sending message
@@ -18,6 +29,7 @@ import ConversationsList from './ConversationsList';
  * @param {Function} props.onNewConversation - Handler for creating new conversation
  * @param {Function} props.onSelectConversation - Handler for selecting a conversation
  * @param {Function} props.onBackToList - Handler for going back to conversation list
+ * @param {Function} props.onQuickAction - Handler for quick action chip clicks
  */
 export default function AssistantTab({
   conversations,
@@ -25,6 +37,7 @@ export default function AssistantTab({
   messages,
   inputMessage,
   isSendingMessage,
+  isSearchingData,
   isLoadingConversations,
   isSelectMode,
   selectedConversationIds,
@@ -36,7 +49,8 @@ export default function AssistantTab({
   onBackToList,
   onToggleSelectMode,
   onToggleConversationSelection,
-  onDeleteSelectedConversations
+  onDeleteSelectedConversations,
+  onQuickAction
 }) {
   const messagesEndRef = useRef(null);
 
@@ -80,8 +94,27 @@ export default function AssistantTab({
       {/* Chat Messages Area */}
       <div className="flex-1 overflow-y-scroll overflow-x-hidden p-4 space-y-4 message-container" style={{ scrollbarGutter: 'stable' }}>
         {messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-            Start a conversation with the AI assistant
+          <div className="flex flex-col items-center justify-center h-full">
+            <div className="flex items-center gap-2 mb-4">
+              <Sparkles className="w-5 h-5 text-blue-500" />
+              <span className="text-gray-700 font-medium">AI Teaching Assistant</span>
+            </div>
+            <p className="text-gray-500 text-sm mb-6 text-center max-w-xs">
+              Ask questions about your students' performance, get insights, and receive teaching recommendations.
+            </p>
+            
+            {/* Quick Action Chips */}
+            <div className="flex flex-wrap justify-center gap-2 max-w-sm">
+              {QUICK_ACTIONS.map((action, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => onQuickAction && onQuickAction(action.prompt)}
+                  className="px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-medium rounded-full hover:bg-blue-100 transition-colors border border-blue-200"
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
           </div>
         ) : (
           messages.map((msg, idx) => (
@@ -106,13 +139,27 @@ export default function AssistantTab({
             </div>
           ))
         )}
-        {isSendingMessage && (
+        
+        {/* RAG Searching State */}
+        {isSearchingData && (
           <div className="flex justify-start">
-            <div className="bg-gray-100 rounded-lg px-4 py-2">
-              <RefreshCw className="w-4 h-4 text-gray-600 animate-spin" />
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 flex items-center gap-2">
+              <Search className="w-4 h-4 text-blue-600 animate-pulse" />
+              <span className="text-sm text-blue-700">Searching your data...</span>
             </div>
           </div>
         )}
+        
+        {/* AI Generating State */}
+        {isSendingMessage && !isSearchingData && (
+          <div className="flex justify-start">
+            <div className="bg-gray-100 rounded-lg px-4 py-2 flex items-center gap-2">
+              <RefreshCw className="w-4 h-4 text-gray-600 animate-spin" />
+              <span className="text-sm text-gray-600">Generating response...</span>
+            </div>
+          </div>
+        )}
+        
         {/* Scroll anchor */}
         <div ref={messagesEndRef} />
       </div>

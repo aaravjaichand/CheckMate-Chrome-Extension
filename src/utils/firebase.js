@@ -17,7 +17,8 @@ import {
   orderBy,
   onSnapshot,
   runTransaction,
-  updateDoc
+  updateDoc,
+  deleteDoc
 } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -750,6 +751,123 @@ export function listenToLessonPlansByClass(classId, teacherId, callback) {
 export async function deleteLessonPlan(lessonPlanId) {
   const lessonPlanRef = doc(db, 'lessonPlans', lessonPlanId);
   await updateDoc(lessonPlanRef, { deleted: true, deletedAt: Date.now() });
+}
+
+// ============================================
+// RAG Document Management Functions
+// ============================================
+
+/**
+ * Save a RAG document with embedding for semantic search
+ * @param {string} teacherId - Teacher ID
+ * @param {Object} docData - Document data including content and metadata
+ * @param {number[]} embedding - 768-dimensional embedding vector
+ * @returns {Promise<string>} The generated document ID
+ */
+export async function saveRagDocument(teacherId, docData, embedding) {
+  const ragDocumentsRef = collection(db, 'ragDocuments');
+  const docRef = await addDoc(ragDocumentsRef, {
+    teacherId,
+    type: docData.type, // 'student' | 'class' | 'assignment'
+    studentId: docData.studentId || null,
+    classId: docData.classId,
+    content: docData.content,
+    embedding,
+    metadata: docData.metadata || {},
+    updatedAt: Date.now()
+  });
+  return docRef.id;
+}
+
+/**
+ * Get all RAG documents for a teacher
+ * @param {string} teacherId - Teacher ID
+ * @returns {Promise<Array>} Array of RAG document objects
+ */
+export async function getRagDocuments(teacherId) {
+  const ragDocumentsRef = collection(db, 'ragDocuments');
+  const ragQuery = query(ragDocumentsRef, where('teacherId', '==', teacherId));
+  const snapshot = await getDocs(ragQuery);
+
+  const documents = [];
+  snapshot.forEach((doc) => {
+    documents.push({ id: doc.id, ...doc.data() });
+  });
+  return documents;
+}
+
+/**
+ * Delete all RAG documents for a specific student (for re-grading cleanup)
+ * @param {string} teacherId - Teacher ID
+ * @param {string} studentId - Student ID
+ * @param {string} classId - Class ID (optional, for more specific cleanup)
+ */
+export async function deleteRagDocumentsForStudent(teacherId, studentId, classId = null) {
+  const ragDocumentsRef = collection(db, 'ragDocuments');
+  
+  let ragQuery = query(
+    ragDocumentsRef,
+    where('teacherId', '==', teacherId),
+    where('studentId', '==', studentId)
+  );
+  
+  const snapshot = await getDocs(ragQuery);
+  
+  const deletePromises = [];
+  snapshot.forEach((docSnapshot) => {
+    const data = docSnapshot.data();
+    // If classId is specified, only delete documents for that class
+    if (!classId || data.classId === classId) {
+      deletePromises.push(deleteDoc(doc(db, 'ragDocuments', docSnapshot.id)));
+    }
+  });
+  
+  await Promise.all(deletePromises);
+}
+
+/**
+ * Update or create a RAG document for a class summary
+ * @param {string} teacherId - Teacher ID
+ * @param {string} classId - Class ID
+ * @param {string} content - Summary content
+ * @param {number[]} embedding - Embedding vector
+ * @param {Object} metadata - Additional metadata
+ */
+export async function upsertClassRagDocument(teacherId, classId, content, embedding, metadata) {
+  const ragDocumentsRef = collection(db, 'ragDocuments');
+  
+  // Check if a class summary document already exists
+  const existingQuery = query(
+    ragDocumentsRef,
+    where('teacherId', '==', teacherId),
+    where('classId', '==', classId),
+    where('type', '==', 'class')
+  );
+  const snapshot = await getDocs(existingQuery);
+  
+  if (!snapshot.empty) {
+    // Update existing document
+    const existingDoc = snapshot.docs[0];
+    await setDoc(doc(db, 'ragDocuments', existingDoc.id), {
+      teacherId,
+      type: 'class',
+      studentId: null,
+      classId,
+      content,
+      embedding,
+      metadata,
+      updatedAt: Date.now()
+    });
+    return existingDoc.id;
+  } else {
+    // Create new document
+    return saveRagDocument(teacherId, {
+      type: 'class',
+      classId,
+      content,
+      metadata
+    }, embedding);
+  }
 }
 
 export { auth, db };

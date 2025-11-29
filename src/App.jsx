@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { GraduationCap, BarChart3, Settings, Check, X, MessageSquare, ClipboardList } from 'lucide-react';
 import { GoogleClassroomAPI, authenticate, getStoredAuthData, storeAuthData } from './utils/googleClassroom';
 import { testGeminiConnection } from './utils/gemini';
-import { sendChatMessage, generateConversationName } from './utils/chatbot';
+import { sendChatMessage, sendChatMessageWithRAG, generateConversationName } from './utils/chatbot';
 import {
   saveGrade,
   saveAIGradingResult,
@@ -20,8 +20,12 @@ import {
   recalculateClassAnalytics,
   recalculateStudentAnalytics,
   updateClassAnalytics,
-  updateStudentAnalytics
+  updateStudentAnalytics,
+  saveRagDocument,
+  getClassAnalytics,
+  upsertClassRagDocument
 } from './utils/firebase';
+import { generateEmbedding, generateStudentSummary, generateClassSummary } from './utils/embeddings';
 import { ToastProvider, useToast } from './components/Toast';
 import GradeTab from './components/GradeTab';
 import GradesTab from './components/GradesTab';
@@ -79,6 +83,7 @@ function AppContent() {
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isSearchingData, setIsSearchingData] = useState(false);
   const [abortController, setAbortController] = useState(null);
 
   // Conversation history state
@@ -459,6 +464,66 @@ function AppContent() {
     setGradingResult(updatedResults);
   }
 
+  /**
+   * Index grade data for RAG retrieval (called after saving grades)
+   */
+  async function indexGradeForRAG(gradeData) {
+    const {
+      teacherId,
+      studentId,
+      studentName,
+      classId,
+      className,
+      assignmentName,
+      overallScore,
+      totalPoints,
+      strugglingTopics,
+      questions
+    } = gradeData;
+
+    // Generate and index student summary
+    const studentSummary = generateStudentSummary({
+      studentName,
+      assignmentName,
+      overallScore,
+      totalPoints,
+      strugglingTopics,
+      questions
+    });
+
+    const studentEmbedding = await generateEmbedding(studentSummary);
+    
+    await saveRagDocument(teacherId, {
+      type: 'student',
+      studentId,
+      classId,
+      content: studentSummary,
+      metadata: {
+        studentName,
+        className,
+        assignmentName,
+        avgScore: (overallScore / totalPoints) * 100,
+        topics: strugglingTopics || []
+      }
+    }, studentEmbedding);
+
+    // Update class-level summary document
+    const classAnalytics = await getClassAnalytics(classId);
+    if (classAnalytics) {
+      const classSummary = generateClassSummary(classAnalytics, className);
+      const classEmbedding = await generateEmbedding(classSummary);
+      
+      await upsertClassRagDocument(teacherId, classId, classSummary, classEmbedding, {
+        className,
+        averageGrade: classAnalytics.averageGrade,
+        totalAssignments: classAnalytics.totalAssignments,
+        topStrugglingTopics: classAnalytics.commonStrugglingTopics 
+          ? Object.keys(classAnalytics.commonStrugglingTopics).slice(0, 5)
+          : []
+      });
+    }
+  }
+
   async function handleSaveGrades() {
     if (!firebaseUser) {
       setError('Cannot save grades: Not authenticated with Firebase');
@@ -531,6 +596,23 @@ function AppContent() {
           strugglingTopics: gradingResult.strugglingTopics
         })
       ]);
+
+      // Index student and class data for RAG (non-blocking)
+      indexGradeForRAG({
+        teacherId: firebaseUser.uid,
+        studentId: selectedSubmission.userId,
+        studentName: selectedSubmission.studentName,
+        classId: selectedCourse.id,
+        className: selectedCourse.name,
+        assignmentName: selectedAssignment.title,
+        overallScore: gradingResult.overallScore,
+        totalPoints: gradingResult.totalPoints,
+        strugglingTopics: gradingResult.strugglingTopics,
+        questions: gradingResult.questions
+      }).catch(err => {
+        // RAG indexing failures shouldn't block the user
+        console.warn('RAG indexing failed:', err.message);
+      });
 
       setGradingResult(null);
       setRawAIResponse(null);
@@ -676,8 +758,10 @@ function AppContent() {
         content: msg.content
       }));
 
-      await sendChatMessage(
+      // Use RAG-enhanced chat with teacher's data
+      const { response } = await sendChatMessageWithRAG(
         messagesForAPI,
+        userId, // teacherId for RAG retrieval
         (chunk) => {
           fullAssistantContent += chunk;
           setMessages(prev => {
@@ -689,8 +773,11 @@ function AppContent() {
             return newMessages;
           });
         },
+        () => setIsSearchingData(true), // onRetrievalStart
+        () => setIsSearchingData(false), // onRetrievalComplete
         controller.signal
       );
+      fullAssistantContent = response;
 
       if (conversationId && userId && fullAssistantContent) {
         try {
@@ -806,6 +893,10 @@ function AppContent() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleQuickAction(prompt) {
+    setInputMessage(prompt);
   }
 
   // Authentication screen
@@ -974,6 +1065,7 @@ function AppContent() {
               messages={messages}
               inputMessage={inputMessage}
               isSendingMessage={isSendingMessage}
+              isSearchingData={isSearchingData}
               isLoadingConversations={isLoadingConversations}
               isSelectMode={isSelectMode}
               selectedConversationIds={selectedConversationIds}
@@ -986,6 +1078,7 @@ function AppContent() {
               onToggleSelectMode={handleToggleSelectMode}
               onToggleConversationSelection={handleToggleConversationSelection}
               onDeleteSelectedConversations={handleDeleteSelectedConversations}
+              onQuickAction={handleQuickAction}
             />
           )}
 
