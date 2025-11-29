@@ -2,6 +2,9 @@
  * Chatbot utilities using Gemini API
  */
 
+import { generateEmbedding, searchSimilar } from './embeddings';
+import { getRagDocuments } from './firebase';
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL_ID = 'gemini-2.5-flash';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -118,6 +121,167 @@ export async function sendChatMessage(messages, onChunk = null, signal = null) {
   }
 
   return fullText;
+}
+
+/**
+ * RAG system prompt for teaching assistant
+ */
+const RAG_SYSTEM_PROMPT = `You are a teaching assistant with access to student performance data from graded assignments.
+
+RELEVANT DATA (from semantic search):
+{retrievedDocuments}
+
+INSTRUCTIONS:
+- Answer using the data provided above when relevant
+- Cite specific student names, scores, and struggling topics when available
+- If the data doesn't contain relevant information for the question, acknowledge that and provide general guidance
+- Be concise - teachers are busy
+- Use markdown for formatting when helpful
+- For math content, use LaTeX notation`;
+
+/**
+ * Send a message to the chatbot with RAG-enhanced context
+ * @param {Array} messages - Array of message objects with role and content
+ * @param {string} teacherId - Teacher ID for retrieving their documents
+ * @param {Function} onChunk - Callback function called with batched chunks of text
+ * @param {Function} onRetrievalStart - Callback when RAG retrieval starts
+ * @param {Function} onRetrievalComplete - Callback when RAG retrieval completes
+ * @param {AbortSignal} signal - Optional abort signal to cancel the stream
+ * @returns {Promise<{response: string, retrievedDocs: Array}>} The response and retrieved docs
+ */
+export async function sendChatMessageWithRAG(
+  messages,
+  teacherId,
+  onChunk = null,
+  onRetrievalStart = null,
+  onRetrievalComplete = null,
+  signal = null
+) {
+  // Get the latest user message for embedding
+  const latestUserMessage = messages.filter(m => m.role === 'user').pop();
+  if (!latestUserMessage) {
+    throw new Error('No user message found');
+  }
+
+  let retrievedDocs = [];
+  let contextString = 'No student data available yet. Answer based on general teaching knowledge.';
+
+  // Perform RAG retrieval if teacherId is provided
+  if (teacherId) {
+    try {
+      if (onRetrievalStart) onRetrievalStart();
+
+      // Embed the user's query
+      const queryEmbedding = await generateEmbedding(latestUserMessage.content);
+
+      // Fetch all teacher's RAG documents
+      const allDocuments = await getRagDocuments(teacherId);
+
+      if (allDocuments.length > 0) {
+        // Search for similar documents
+        retrievedDocs = searchSimilar(queryEmbedding, allDocuments, 10);
+
+        // Build context string from retrieved documents
+        if (retrievedDocs.length > 0) {
+          contextString = retrievedDocs
+            .filter(doc => doc.score > 0.3) // Only include reasonably relevant docs
+            .map((doc, idx) => {
+              const meta = doc.metadata || {};
+              let docInfo = `[${idx + 1}] ${doc.content}`;
+              if (meta.className) {
+                docInfo = `[${idx + 1}] (${meta.className}) ${doc.content}`;
+              }
+              return docInfo;
+            })
+            .join('\n\n');
+
+          if (!contextString.trim()) {
+            contextString = 'No highly relevant student data found for this query. Answer based on general teaching knowledge.';
+          }
+        }
+      }
+
+      if (onRetrievalComplete) onRetrievalComplete(retrievedDocs);
+    } catch (err) {
+      // RAG retrieval failed, continue without context
+      console.warn('RAG retrieval failed:', err.message);
+      if (onRetrievalComplete) onRetrievalComplete([]);
+    }
+  }
+
+  // Build the system prompt with retrieved context
+  const systemPrompt = RAG_SYSTEM_PROMPT.replace('{retrievedDocuments}', contextString);
+
+  const url = `${GEMINI_API_URL}/${GEMINI_MODEL_ID}:streamGenerateContent?alt=sse`;
+
+  const contents = messages.map(msg => ({
+    role: msg.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: msg.content }]
+  }));
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': GEMINI_API_KEY
+    },
+    body: JSON.stringify({
+      contents,
+      systemInstruction: {
+        parts: [{ text: systemPrompt }]
+      },
+      generationConfig: {
+        maxOutputTokens: 2048,
+        temperature: 0.7
+      }
+    }),
+    signal
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Gemini API error (${response.status}): ${errorText}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let fullText = '';
+  const batchHandler = onChunk ? createBatchedChunkHandler(onChunk) : null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const chunk = decoder.decode(value, { stream: true });
+    const lines = chunk.split('\n');
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const jsonStr = line.substring(6);
+        if (jsonStr === '[DONE]') continue;
+
+        try {
+          const data = JSON.parse(jsonStr);
+          const textPart = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+          if (textPart) {
+            fullText += textPart;
+            if (batchHandler) {
+              batchHandler.updateChunk(textPart);
+            }
+          }
+        } catch {
+          // Ignore parse errors for partial chunks
+        }
+      }
+    }
+  }
+
+  if (batchHandler) {
+    batchHandler.flush();
+  }
+
+  return { response: fullText, retrievedDocs };
 }
 
 /**
