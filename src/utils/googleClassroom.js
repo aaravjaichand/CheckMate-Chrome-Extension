@@ -13,13 +13,22 @@ export class GoogleClassroomAPI {
     this.accessToken = token;
   }
 
-  async apiCall(endpoint) {
-    const response = await fetch(`${API_BASE_URL}/${endpoint}`, {
+  async apiCall(endpoint, options = {}) {
+    const { method = 'GET', body } = options;
+    
+    const fetchOptions = {
+      method,
       headers: {
         'Authorization': `Bearer ${this.accessToken}`,
         'Content-Type': 'application/json'
       }
-    });
+    };
+
+    if (body && method !== 'GET') {
+      fetchOptions.body = JSON.stringify(body);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/${endpoint}`, fetchOptions);
 
     if (!response.ok) {
       if (response.status === 401) {
