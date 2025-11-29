@@ -870,4 +870,121 @@ export async function upsertClassRagDocument(teacherId, classId, content, embedd
   }
 }
 
+/**
+ * Save or update a RAG document for a lesson plan
+ * @param {string} teacherId - Teacher ID
+ * @param {string} lessonPlanId - Lesson Plan ID
+ * @param {string} content - Summary content for embedding
+ * @param {number[]} embedding - Embedding vector
+ * @param {Object} metadata - Additional metadata (className, planTitle, etc.)
+ * @returns {Promise<string>} The RAG document ID
+ */
+export async function saveLessonPlanRagDocument(teacherId, lessonPlanId, content, embedding, metadata) {
+  const ragDocumentsRef = collection(db, 'ragDocuments');
+  
+  // Check if a RAG document for this lesson plan already exists
+  const existingQuery = query(
+    ragDocumentsRef,
+    where('teacherId', '==', teacherId),
+    where('lessonPlanId', '==', lessonPlanId),
+    where('type', '==', 'lesson_plan')
+  );
+  const snapshot = await getDocs(existingQuery);
+  
+  if (!snapshot.empty) {
+    // Update existing document
+    const existingDoc = snapshot.docs[0];
+    await setDoc(doc(db, 'ragDocuments', existingDoc.id), {
+      teacherId,
+      type: 'lesson_plan',
+      lessonPlanId,
+      classId: metadata.classId || null,
+      studentId: null,
+      content,
+      embedding,
+      metadata,
+      updatedAt: Date.now()
+    });
+    return existingDoc.id;
+  } else {
+    // Create new document
+    const docRef = await addDoc(ragDocumentsRef, {
+      teacherId,
+      type: 'lesson_plan',
+      lessonPlanId,
+      classId: metadata.classId || null,
+      studentId: null,
+      content,
+      embedding,
+      metadata,
+      updatedAt: Date.now()
+    });
+    return docRef.id;
+  }
+}
+
+/**
+ * Get a specific lesson plan by ID
+ * @param {string} lessonPlanId - Lesson Plan ID
+ * @returns {Promise<Object|null>} Lesson plan object or null
+ */
+export async function getLessonPlanById(lessonPlanId) {
+  const lessonPlanRef = doc(db, 'lessonPlans', lessonPlanId);
+  const snapshot = await getDoc(lessonPlanRef);
+  
+  if (!snapshot.exists()) return null;
+  
+  const data = snapshot.data();
+  if (data.deleted) return null;
+  
+  return { id: lessonPlanId, ...data };
+}
+
+/**
+ * Get all lesson plans for a teacher (across all classes)
+ * @param {string} teacherId - Teacher ID
+ * @returns {Promise<Array>} Array of lesson plan objects
+ */
+export async function getLessonPlansByTeacher(teacherId) {
+  const lessonPlansRef = collection(db, 'lessonPlans');
+  
+  try {
+    // Try query with ordering (requires composite index)
+    const lessonPlansQuery = query(
+      lessonPlansRef,
+      where('teacherId', '==', teacherId),
+      orderBy('createdAt', 'desc')
+    );
+    const snapshot = await getDocs(lessonPlansQuery);
+
+    const lessonPlans = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      if (!data.deleted) {
+        lessonPlans.push({ id: docSnap.id, ...data });
+      }
+    });
+    return lessonPlans;
+  } catch (err) {
+    // Fallback: query without orderBy if index doesn't exist
+    console.warn('getLessonPlansByTeacher: Falling back to unordered query:', err.message);
+    const simpleQuery = query(
+      lessonPlansRef,
+      where('teacherId', '==', teacherId)
+    );
+    const snapshot = await getDocs(simpleQuery);
+
+    const lessonPlans = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      if (!data.deleted) {
+        lessonPlans.push({ id: docSnap.id, ...data });
+      }
+    });
+    // Sort manually
+    lessonPlans.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    return lessonPlans;
+  }
+}
+
 export { auth, db };

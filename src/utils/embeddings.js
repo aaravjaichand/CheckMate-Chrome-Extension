@@ -101,6 +101,7 @@ export function searchSimilar(queryEmbedding, documents, topK = 10) {
       type: doc.type,
       studentId: doc.studentId,
       classId: doc.classId,
+      lessonPlanId: doc.lessonPlanId, // Include lessonPlanId for lesson plan documents
       score: cosineSimilarity(queryEmbedding, doc.embedding)
     }));
 
@@ -164,6 +165,54 @@ export function generateClassSummary(classData, className) {
       const names = needsSupport.slice(0, 5).map(s => `${s.name} (${s.averageScore.toFixed(1)}%)`);
       summary += ` Students needing support: ${names.join(', ')}.`;
     }
+  }
+  
+  return summary;
+}
+
+/**
+ * Generate a lesson plan summary text for embedding
+ * @param {Object} lessonPlan - Lesson plan object with title, overview, objectives, etc.
+ * @param {string} className - Name of the class this lesson plan is for
+ * @returns {string} Text summary for embedding
+ */
+export function generateLessonPlanSummary(lessonPlan, className) {
+  let summary = `Lesson plan "${lessonPlan.title}" for class "${className}".`;
+  
+  // Add duration
+  if (lessonPlan.duration) {
+    summary += ` Duration: ${lessonPlan.duration}.`;
+  }
+  
+  // Add overview
+  if (lessonPlan.overview) {
+    summary += ` Overview: ${lessonPlan.overview}`;
+  }
+  
+  // Add learning objectives
+  if (lessonPlan.objectives?.length > 0) {
+    summary += ` Learning objectives: ${lessonPlan.objectives.join('; ')}.`;
+  }
+  
+  // Add activity names to help with searching
+  if (lessonPlan.activities?.length > 0) {
+    const activityNames = lessonPlan.activities.map(a => a.name).join(', ');
+    summary += ` Activities include: ${activityNames}.`;
+  }
+  
+  // Add differentiation strategies (helpful for finding plans for struggling students)
+  if (lessonPlan.differentiation) {
+    if (lessonPlan.differentiation.struggling) {
+      summary += ` For struggling students: ${lessonPlan.differentiation.struggling}`;
+    }
+    if (lessonPlan.differentiation.advanced) {
+      summary += ` For advanced students: ${lessonPlan.differentiation.advanced}`;
+    }
+  }
+  
+  // Add assessment info
+  if (lessonPlan.assessment) {
+    summary += ` Assessment: ${lessonPlan.assessment}`;
   }
   
   return summary;

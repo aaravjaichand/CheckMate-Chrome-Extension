@@ -11,6 +11,39 @@ const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
 const CHUNK_BATCH_DELAY = 50;
 
 /**
+ * Tool definitions for lesson plan actions
+ */
+const LESSON_PLAN_TOOLS = [
+  {
+    functionDeclarations: [
+      {
+        name: 'generate_lesson_plan',
+        description: 'Generate a new lesson plan for a specific class. Use this when the teacher explicitly asks to create or generate a NEW lesson plan. Requires class context.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            classId: {
+              type: 'STRING',
+              description: 'The ID of the class to generate the lesson plan for'
+            },
+            className: {
+              type: 'STRING',
+              description: 'The name of the class'
+            },
+            focusTopics: {
+              type: 'ARRAY',
+              items: { type: 'STRING' },
+              description: 'Optional specific topics to focus on in the lesson plan'
+            }
+          },
+          required: ['classId', 'className']
+        }
+      }
+    ]
+  }
+];
+
+/**
  * Creates a debounced chunk callback to batch streaming updates
  * @param {Function} callback - Original callback function
  * @returns {Object} Object with updateChunk and flush methods
@@ -126,10 +159,13 @@ export async function sendChatMessage(messages, onChunk = null, signal = null) {
 /**
  * RAG system prompt for teaching assistant
  */
-const RAG_SYSTEM_PROMPT = `You are a teaching assistant with access to student performance data from graded assignments.
+const RAG_SYSTEM_PROMPT = `You are a teaching assistant with access to student performance data and lesson plans.
 
 RELEVANT DATA (from semantic search):
 {retrievedDocuments}
+
+AVAILABLE CLASSES:
+{availableClasses}
 
 INSTRUCTIONS:
 - Answer using the data provided above when relevant
@@ -137,21 +173,27 @@ INSTRUCTIONS:
 - If the data doesn't contain relevant information for the question, acknowledge that and provide general guidance
 - Be concise - teachers are busy
 - Use markdown for formatting when helpful
-- For math content, use LaTeX notation`;
+- For math content, use LaTeX notation
+
+TOOL USAGE:
+- generate_lesson_plan: Use when teacher explicitly asks to CREATE or GENERATE a NEW lesson plan. You MUST provide a valid classId and className from AVAILABLE CLASSES. If the class is ambiguous, ask which class they want.
+- Always provide helpful text alongside any tool calls explaining what you're doing.`;
 
 /**
- * Send a message to the chatbot with RAG-enhanced context
+ * Send a message to the chatbot with RAG-enhanced context and tool support
  * @param {Array} messages - Array of message objects with role and content
  * @param {string} teacherId - Teacher ID for retrieving their documents
+ * @param {Array} courses - Available courses for the teacher (for lesson plan generation context)
  * @param {Function} onChunk - Callback function called with batched chunks of text
  * @param {Function} onRetrievalStart - Callback when RAG retrieval starts
  * @param {Function} onRetrievalComplete - Callback when RAG retrieval completes
  * @param {AbortSignal} signal - Optional abort signal to cancel the stream
- * @returns {Promise<{response: string, retrievedDocs: Array}>} The response and retrieved docs
+ * @returns {Promise<{response: string, retrievedDocs: Array, toolCalls: Array}>} The response, retrieved docs, and tool calls
  */
 export async function sendChatMessageWithRAG(
   messages,
   teacherId,
+  courses = [],
   onChunk = null,
   onRetrievalStart = null,
   onRetrievalComplete = null,
@@ -187,10 +229,14 @@ export async function sendChatMessageWithRAG(
             .filter(doc => doc.score > 0.3) // Only include reasonably relevant docs
             .map((doc, idx) => {
               const meta = doc.metadata || {};
-              let docInfo = `[${idx + 1}] ${doc.content}`;
+              const type = doc.type || 'unknown';
+              let docInfo = `[${idx + 1}] (${type})`;
+              
               if (meta.className) {
-                docInfo = `[${idx + 1}] (${meta.className}) ${doc.content}`;
+                docInfo += ` (${meta.className})`;
               }
+              
+              docInfo += ` ${doc.content}`;
               return docInfo;
             })
             .join('\n\n');
@@ -209,8 +255,15 @@ export async function sendChatMessageWithRAG(
     }
   }
 
+  // Build available classes string
+  const classesString = courses.length > 0
+    ? courses.map(c => `- ${c.name} (classId: ${c.id})`).join('\n')
+    : 'No classes available.';
+
   // Build the system prompt with retrieved context
-  const systemPrompt = RAG_SYSTEM_PROMPT.replace('{retrievedDocuments}', contextString);
+  const systemPrompt = RAG_SYSTEM_PROMPT
+    .replace('{retrievedDocuments}', contextString)
+    .replace('{availableClasses}', classesString);
 
   const url = `${GEMINI_API_URL}/${GEMINI_MODEL_ID}:streamGenerateContent?alt=sse`;
 
@@ -230,6 +283,7 @@ export async function sendChatMessageWithRAG(
       systemInstruction: {
         parts: [{ text: systemPrompt }]
       },
+      tools: LESSON_PLAN_TOOLS,
       generationConfig: {
         maxOutputTokens: 2048,
         temperature: 0.7
@@ -246,6 +300,7 @@ export async function sendChatMessageWithRAG(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let fullText = '';
+  const toolCalls = [];
   const batchHandler = onChunk ? createBatchedChunkHandler(onChunk) : null;
 
   while (true) {
@@ -262,12 +317,24 @@ export async function sendChatMessageWithRAG(
 
         try {
           const data = JSON.parse(jsonStr);
-          const textPart = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-          if (textPart) {
-            fullText += textPart;
-            if (batchHandler) {
-              batchHandler.updateChunk(textPart);
+          const parts = data.candidates?.[0]?.content?.parts || [];
+          
+          for (const part of parts) {
+            // Handle text parts
+            if (part.text) {
+              fullText += part.text;
+              if (batchHandler) {
+                batchHandler.updateChunk(part.text);
+              }
+            }
+            
+            // Handle function call parts
+            if (part.functionCall) {
+              const fc = part.functionCall;
+              toolCalls.push({
+                type: fc.name,
+                ...fc.args
+              });
             }
           }
         } catch {
@@ -281,7 +348,7 @@ export async function sendChatMessageWithRAG(
     batchHandler.flush();
   }
 
-  return { response: fullText, retrievedDocs };
+  return { response: fullText, retrievedDocs, toolCalls };
 }
 
 /**

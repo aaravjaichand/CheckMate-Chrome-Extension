@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { RefreshCw, Send, Square, ChevronLeft, Search, Sparkles } from 'lucide-react';
+import { RefreshCw, Send, Square, ChevronLeft, Search, Sparkles, FileText } from 'lucide-react';
 import MessageRenderer from './MessageRenderer';
 import ConversationsList from './ConversationsList';
 
@@ -10,19 +10,50 @@ const QUICK_ACTIONS = [
   { label: 'Struggling students', prompt: 'Which students are struggling and need extra help?' },
   { label: 'Common mistakes', prompt: 'What are the most common topics students struggle with?' },
   { label: 'Class performance', prompt: 'How is my class performing overall? Give me a summary.' },
-  { label: 'Improvement tips', prompt: 'What strategies can I use to help struggling students improve?' }
+  { label: 'Lesson plans', prompt: 'Show me the lesson plans I have created.' }
 ];
+
+/**
+ * Renders tool call UI for a message (only for generate_lesson_plan)
+ */
+function ToolCallUI({ toolCalls, onOpenLessonPlanModal, isGeneratingLessonPlan, hasGeneratedPlan }) {
+  if (!toolCalls || toolCalls.length === 0) return null;
+
+  const generateCall = toolCalls.find(t => t.type === 'generate_lesson_plan');
+  if (!generateCall) return null;
+
+  return (
+    <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-200">
+      {isGeneratingLessonPlan ? (
+        <div className="flex items-center gap-2 px-3 py-2 bg-green-50 text-green-700 rounded-lg text-sm">
+          <RefreshCw className="w-4 h-4 animate-spin" />
+          <span>Generating lesson plan for {generateCall.className}...</span>
+        </div>
+      ) : hasGeneratedPlan ? (
+        <button
+          onClick={onOpenLessonPlanModal}
+          className="flex items-center gap-2 px-3 py-2 bg-green-100 text-green-700 rounded-lg text-sm font-medium hover:bg-green-200 transition-colors"
+        >
+          <FileText className="w-4 h-4" />
+          View Generated Plan
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * AssistantTab component - AI chatbot interface with conversation history
  * @param {Object} props
  * @param {Array} props.conversations - Array of conversation objects
  * @param {Object} props.selectedConversation - Currently selected conversation
- * @param {Array} props.messages - Array of message objects with {role, content}
+ * @param {Array} props.messages - Array of message objects with {role, content, toolCalls}
  * @param {string} props.inputMessage - Current input message
  * @param {boolean} props.isSendingMessage - Whether a message is being sent
  * @param {boolean} props.isSearchingData - Whether RAG is searching data
  * @param {boolean} props.isLoadingConversations - Whether conversations are loading
+ * @param {boolean} props.isGeneratingLessonPlan - Whether a lesson plan is being generated
+ * @param {boolean} props.hasGeneratedPlan - Whether a plan has been generated and is ready to view
  * @param {Function} props.onInputChange - Handler for input change
  * @param {Function} props.onSendMessage - Handler for sending message
  * @param {Function} props.onStopMessage - Handler for stopping AI message generation
@@ -30,6 +61,7 @@ const QUICK_ACTIONS = [
  * @param {Function} props.onSelectConversation - Handler for selecting a conversation
  * @param {Function} props.onBackToList - Handler for going back to conversation list
  * @param {Function} props.onQuickAction - Handler for quick action chip clicks
+ * @param {Function} props.onOpenLessonPlanModal - Handler to open the lesson plan modal
  */
 export default function AssistantTab({
   conversations,
@@ -41,6 +73,8 @@ export default function AssistantTab({
   isLoadingConversations,
   isSelectMode,
   selectedConversationIds,
+  isGeneratingLessonPlan,
+  hasGeneratedPlan,
   onInputChange,
   onSendMessage,
   onStopMessage,
@@ -50,7 +84,8 @@ export default function AssistantTab({
   onToggleSelectMode,
   onToggleConversationSelection,
   onDeleteSelectedConversations,
-  onQuickAction
+  onQuickAction,
+  onOpenLessonPlanModal
 }) {
   const messagesEndRef = useRef(null);
 
@@ -133,7 +168,17 @@ export default function AssistantTab({
                 {msg.role === 'user' ? (
                   <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
                 ) : (
-                  <MessageRenderer content={msg.content} />
+                  <>
+                    <MessageRenderer content={msg.content} />
+                    {msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <ToolCallUI
+                        toolCalls={msg.toolCalls}
+                        onOpenLessonPlanModal={onOpenLessonPlanModal}
+                        isGeneratingLessonPlan={isGeneratingLessonPlan}
+                        hasGeneratedPlan={hasGeneratedPlan}
+                      />
+                    )}
+                  </>
                 )}
               </div>
             </div>

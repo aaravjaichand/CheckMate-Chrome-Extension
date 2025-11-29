@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { getClassAnalytics, getStudentAnalytics, getTeacherSettings, saveLessonPlan, getLessonPlansByClass, deleteLessonPlan, auth } from '../utils/firebase';
+import { getClassAnalytics, getStudentAnalytics, getTeacherSettings, saveLessonPlan, getLessonPlansByClass, deleteLessonPlan, saveLessonPlanRagDocument, auth } from '../utils/firebase';
+import { generateEmbedding, generateLessonPlanSummary } from '../utils/embeddings';
 import { BarChart3, TrendingUp, Users, AlertCircle, BookOpen, ChevronRight, ArrowLeft, Sparkles, RefreshCw, FileText, Clock, X } from 'lucide-react';
 import StudentChart from './StudentChart';
 import LessonPlanModal from './LessonPlanModal';
@@ -98,6 +99,30 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
     }
   }
 
+  /**
+   * Index a lesson plan for RAG retrieval
+   */
+  async function indexLessonPlanForRAG(lessonPlanId, plan, classInfo, strugglingTopics) {
+    if (!auth.currentUser) return;
+    
+    const summary = generateLessonPlanSummary(plan, classInfo.name);
+    const embedding = await generateEmbedding(summary);
+    
+    await saveLessonPlanRagDocument(
+      auth.currentUser.uid,
+      lessonPlanId,
+      summary,
+      embedding,
+      {
+        classId: classInfo.id,
+        className: classInfo.name,
+        planTitle: plan.title,
+        duration: plan.duration,
+        strugglingTopics: strugglingTopics || []
+      }
+    );
+  }
+
   async function handleGenerateLessonPlan() {
     if (!analytics || !selectedClass || !auth.currentUser) return;
     
@@ -146,7 +171,7 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
       
       // Try to save to Firebase (but don't block on it)
       try {
-        await saveLessonPlan({
+        const lessonPlanId = await saveLessonPlan({
           classId: selectedClass.id,
           className: selectedClass.name,
           teacherId: auth.currentUser.uid,
@@ -158,6 +183,10 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
           },
           plan: response
         });
+        
+        // Index lesson plan for RAG retrieval (non-blocking)
+        indexLessonPlanForRAG(lessonPlanId, response, selectedClass, analyticsData.strugglingTopics)
+          .catch(err => console.warn('RAG indexing failed:', err.message));
         
         // Reload lesson plans after successful save
         const plans = await getLessonPlansByClass(selectedClass.id, auth.currentUser.uid);

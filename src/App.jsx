@@ -23,15 +23,18 @@ import {
   updateStudentAnalytics,
   saveRagDocument,
   getClassAnalytics,
-  upsertClassRagDocument
+  upsertClassRagDocument,
+  saveLessonPlan,
+  saveLessonPlanRagDocument
 } from './utils/firebase';
-import { generateEmbedding, generateStudentSummary, generateClassSummary } from './utils/embeddings';
+import { generateEmbedding, generateStudentSummary, generateClassSummary, generateLessonPlanSummary } from './utils/embeddings';
 import { ToastProvider, useToast } from './components/Toast';
 import GradeTab from './components/GradeTab';
 import GradesTab from './components/GradesTab';
 import AnalyticsTab from './components/AnalyticsTab';
 import AssistantTab from './components/AssistantTab';
 import SettingsTab from './components/SettingsTab';
+import LessonPlanModal from './components/LessonPlanModal';
 
 function AppContent() {
   const toast = useToast();
@@ -93,6 +96,11 @@ function AppContent() {
   const [gradesUnsubscribe, setGradesUnsubscribe] = useState(null);
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedConversationIds, setSelectedConversationIds] = useState([]);
+
+  // Lesson plan modal state (for Assistant tab)
+  const [chatLessonPlan, setChatLessonPlan] = useState(null);
+  const [isChatLessonPlanModalOpen, setIsChatLessonPlanModalOpen] = useState(false);
+  const [isGeneratingLessonPlanFromChat, setIsGeneratingLessonPlanFromChat] = useState(false);
 
   // Ref to track conversations currently generating names (prevents duplicates)
   const generatingNamesRef = useRef(new Set());
@@ -731,7 +739,7 @@ function AppContent() {
     const updatedMessages = [...messages, newUserMessage];
     setMessages(updatedMessages);
 
-    const assistantMessage = { role: 'assistant', content: '' };
+    const assistantMessage = { role: 'assistant', content: '', toolCalls: [] };
     setMessages([...updatedMessages, assistantMessage]);
 
     // Capture IDs to avoid stale closure issues
@@ -753,15 +761,17 @@ function AppContent() {
 
     try {
       let fullAssistantContent = '';
+      let toolCallsFromResponse = [];
       const messagesForAPI = updatedMessages.map(msg => ({
         role: msg.role,
         content: msg.content
       }));
 
-      // Use RAG-enhanced chat with teacher's data
-      const { response } = await sendChatMessageWithRAG(
+      // Use RAG-enhanced chat with teacher's data and tool support
+      const { response, toolCalls } = await sendChatMessageWithRAG(
         messagesForAPI,
         userId, // teacherId for RAG retrieval
+        courses, // available courses for lesson plan context
         (chunk) => {
           fullAssistantContent += chunk;
           setMessages(prev => {
@@ -778,6 +788,27 @@ function AppContent() {
         controller.signal
       );
       fullAssistantContent = response;
+      toolCallsFromResponse = toolCalls || [];
+
+      // Handle tool calls - auto-execute generate_lesson_plan
+      if (toolCallsFromResponse.length > 0) {
+        const generateCall = toolCallsFromResponse.find(t => t.type === 'generate_lesson_plan');
+        if (generateCall && generateCall.classId && generateCall.className) {
+          // Reset any previous generated plan
+          setChatLessonPlan(null);
+          // Show generating state in the message
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const lastMessage = newMessages[newMessages.length - 1];
+            if (lastMessage.role === 'assistant') {
+              lastMessage.toolCalls = [generateCall];
+            }
+            return newMessages;
+          });
+          // Trigger generation (non-blocking)
+          handleGenerateLessonPlanFromChat(generateCall.classId, generateCall.className, generateCall.focusTopics);
+        }
+      }
 
       if (conversationId && userId && fullAssistantContent) {
         try {
@@ -843,6 +874,7 @@ function AppContent() {
       setSelectedConversation(newConversation);
       setMessages([]);
       setInputMessage('');
+      setChatLessonPlan(null); // Reset lesson plan state for new conversation
     } catch (err) {
       setError(`Failed to create conversation: ${err.message}`);
     }
@@ -857,12 +889,14 @@ function AppContent() {
     setSelectedConversation(conversation);
     setMessages(conversation.messages || []);
     setInputMessage('');
+    setChatLessonPlan(null); // Reset lesson plan state when switching conversations
   }
 
   function handleBackToConversationList() {
     setSelectedConversation(null);
     setMessages([]);
     setInputMessage('');
+    setChatLessonPlan(null); // Reset lesson plan state
   }
 
   function handleToggleSelectMode() {
@@ -897,6 +931,117 @@ function AppContent() {
 
   function handleQuickAction(prompt) {
     setInputMessage(prompt);
+  }
+
+  /**
+   * Handle generating a lesson plan from the chatbot
+   */
+  async function handleGenerateLessonPlanFromChat(classId, className, focusTopics = []) {
+    if (!firebaseUser) {
+      toast.error('Not authenticated');
+      return;
+    }
+
+    setIsGeneratingLessonPlanFromChat(true);
+
+    try {
+      // Get class analytics for the lesson plan generation
+      const analytics = await getClassAnalytics(classId);
+      
+      // Prepare analytics data for lesson plan generation
+      let strugglingTopics = focusTopics;
+      let topicCounts = {};
+      
+      if (analytics?.commonStrugglingTopics) {
+        const topicsEntries = Object.entries(analytics.commonStrugglingTopics)
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, 5);
+        
+        if (strugglingTopics.length === 0) {
+          strugglingTopics = topicsEntries.map(([topic]) => topic);
+        }
+        topicCounts = Object.fromEntries(topicsEntries);
+      }
+
+      const analyticsData = {
+        className,
+        classAverage: Math.round(analytics?.averageGrade || 0),
+        totalStudents: analytics?.studentPerformances ? Object.keys(analytics.studentPerformances).length : 0,
+        studentsNeedingSupport: analytics?.studentPerformances 
+          ? Object.values(analytics.studentPerformances).filter(s => s.averageScore < 80).length 
+          : 0,
+        strugglingTopics,
+        topicCounts
+      };
+
+      // Generate lesson plan via background.js
+      const response = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          { action: 'generateLessonPlan', data: analyticsData },
+          (res) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else if (res?.success) {
+              resolve(res.result);
+            } else {
+              reject(new Error(res?.error || 'Failed to generate lesson plan'));
+            }
+          }
+        );
+      });
+
+      // Save to Firebase
+      const lessonPlanId = await saveLessonPlan({
+        classId,
+        className,
+        teacherId: firebaseUser.uid,
+        analyticsSnapshot: {
+          classAverage: analyticsData.classAverage,
+          totalStudents: analyticsData.totalStudents,
+          studentsNeedingSupport: analyticsData.studentsNeedingSupport,
+          strugglingTopics: analyticsData.strugglingTopics
+        },
+        plan: response
+      });
+
+      // Index for RAG (non-blocking)
+      indexLessonPlanForRAG(lessonPlanId, response, { id: classId, name: className }, strugglingTopics)
+        .catch(err => console.warn('RAG indexing failed:', err.message));
+
+      // Store the lesson plan for modal viewing
+      setChatLessonPlan(response);
+
+      toast.success('Lesson plan generated successfully!');
+    } catch (err) {
+      console.error('Failed to generate lesson plan:', err);
+      toast.error(err.message || 'Failed to generate lesson plan');
+    } finally {
+      setIsGeneratingLessonPlanFromChat(false);
+    }
+  }
+
+  /**
+   * Index a lesson plan for RAG retrieval
+   */
+  async function indexLessonPlanForRAG(lessonPlanId, plan, classInfo, strugglingTopics) {
+    if (!firebaseUser) return;
+    
+    const summary = generateLessonPlanSummary(plan, classInfo.name);
+    const embedding = await generateEmbedding(summary);
+    
+    await saveLessonPlanRagDocument(
+      firebaseUser.uid,
+      lessonPlanId,
+      summary,
+      embedding,
+      {
+        classId: classInfo.id,
+        className: classInfo.name,
+        planTitle: plan.title,
+        duration: plan.duration,
+        strugglingTopics: strugglingTopics || []
+      }
+    );
   }
 
   // Authentication screen
@@ -1059,27 +1204,37 @@ function AppContent() {
           )}
 
           {activeTab === 'assistant' && (
-            <AssistantTab
-              conversations={conversations}
-              selectedConversation={selectedConversation}
-              messages={messages}
-              inputMessage={inputMessage}
-              isSendingMessage={isSendingMessage}
-              isSearchingData={isSearchingData}
-              isLoadingConversations={isLoadingConversations}
-              isSelectMode={isSelectMode}
-              selectedConversationIds={selectedConversationIds}
-              onInputChange={setInputMessage}
-              onSendMessage={handleSendMessage}
-              onStopMessage={handleStopMessage}
-              onNewConversation={handleNewConversation}
-              onSelectConversation={handleSelectConversation}
-              onBackToList={handleBackToConversationList}
-              onToggleSelectMode={handleToggleSelectMode}
-              onToggleConversationSelection={handleToggleConversationSelection}
-              onDeleteSelectedConversations={handleDeleteSelectedConversations}
-              onQuickAction={handleQuickAction}
-            />
+            <>
+              <AssistantTab
+                conversations={conversations}
+                selectedConversation={selectedConversation}
+                messages={messages}
+                inputMessage={inputMessage}
+                isSendingMessage={isSendingMessage}
+                isSearchingData={isSearchingData}
+                isLoadingConversations={isLoadingConversations}
+                isSelectMode={isSelectMode}
+                selectedConversationIds={selectedConversationIds}
+                isGeneratingLessonPlan={isGeneratingLessonPlanFromChat}
+                hasGeneratedPlan={!!chatLessonPlan}
+                onInputChange={setInputMessage}
+                onSendMessage={handleSendMessage}
+                onStopMessage={handleStopMessage}
+                onNewConversation={handleNewConversation}
+                onSelectConversation={handleSelectConversation}
+                onBackToList={handleBackToConversationList}
+                onToggleSelectMode={handleToggleSelectMode}
+                onToggleConversationSelection={handleToggleConversationSelection}
+                onDeleteSelectedConversations={handleDeleteSelectedConversations}
+                onQuickAction={handleQuickAction}
+                onOpenLessonPlanModal={() => setIsChatLessonPlanModalOpen(true)}
+              />
+              <LessonPlanModal
+                lessonPlan={chatLessonPlan}
+                isOpen={isChatLessonPlanModalOpen}
+                onClose={() => setIsChatLessonPlanModalOpen(false)}
+              />
+            </>
           )}
 
           {activeTab === 'settings' && (
