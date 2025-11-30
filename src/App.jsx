@@ -103,6 +103,13 @@ function AppContent() {
   const [isChatLessonPlanModalOpen, setIsChatLessonPlanModalOpen] = useState(false);
   const [isGeneratingLessonPlanFromChat, setIsGeneratingLessonPlanFromChat] = useState(false);
 
+  // Email draft state (for Assistant tab)
+  const [emailDraft, setEmailDraft] = useState(null);
+  const [isEmailSending, setIsEmailSending] = useState(false);
+
+  // Email signature state (for Settings tab)
+  const [emailSignature, setEmailSignature] = useState('');
+
   // Ref to track conversations currently generating names (prevents duplicates)
   const generatingNamesRef = useRef(new Set());
 
@@ -219,6 +226,12 @@ function AppContent() {
           setFirebaseUser(authData.firebaseUser);
         }
         setIsAuthenticated(true);
+
+        // Load email signature from storage
+        const stored = await chrome.storage.local.get(['emailSignature']);
+        if (stored.emailSignature) {
+          setEmailSignature(stored.emailSignature);
+        }
       }
     } catch {
       // Auth check failed silently
@@ -485,6 +498,7 @@ function AppContent() {
       teacherId,
       studentId,
       studentName,
+      studentEmail,
       classId,
       className,
       assignmentName,
@@ -498,6 +512,7 @@ function AppContent() {
     // Generate and index student summary
     const studentSummary = generateStudentSummary({
       studentName,
+      studentEmail,
       assignmentName,
       overallScore,
       totalPoints,
@@ -515,6 +530,7 @@ function AppContent() {
       content: studentSummary,
       metadata: {
         studentName,
+        studentEmail: studentEmail || null,
         className,
         assignmentName,
         avgScore: (overallScore / totalPoints) * 100,
@@ -625,6 +641,7 @@ function AppContent() {
         teacherId: firebaseUser.uid,
         studentId: selectedSubmission.userId,
         studentName: selectedSubmission.studentName,
+        studentEmail: selectedSubmission.studentEmail,
         classId: selectedCourse.id,
         className: selectedCourse.name,
         assignmentName: selectedAssignment.title,
@@ -835,13 +852,17 @@ function AppContent() {
         },
         () => setIsSearchingData(true), // onRetrievalStart
         () => setIsSearchingData(false), // onRetrievalComplete
+        (emailData) => { // onEmailDraft - when send_email tool is called
+          setEmailDraft(emailData);
+        },
         controller.signal
       );
       fullAssistantContent = response;
       toolCallsFromResponse = toolCalls || [];
 
-      // Handle tool calls - auto-execute generate_lesson_plan
+      // Handle tool calls
       if (toolCallsFromResponse.length > 0) {
+        // Handle lesson plan generation
         const generateCall = toolCallsFromResponse.find(t => t.type === 'generate_lesson_plan');
         if (generateCall && generateCall.classId && generateCall.className) {
           // Reset any previous generated plan
@@ -857,6 +878,23 @@ function AppContent() {
           });
           // Trigger generation (non-blocking)
           handleGenerateLessonPlanFromChat(generateCall.classId, generateCall.className, generateCall.focusTopics);
+        }
+
+        // Handle email drafting
+        const emailCall = toolCallsFromResponse.find(t => t.type === 'send_email');
+        if (emailCall) {
+          // Add a message about the email draft if there's no text response
+          const emailMessage = fullAssistantContent || `I've drafted an email for ${emailCall.studentName || 'the student'}. Please review it below and click "Send Email" when ready.`;
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const lastMessage = newMessages[newMessages.length - 1];
+            if (lastMessage.role === 'assistant') {
+              lastMessage.content = emailMessage;
+              lastMessage.toolCalls = [emailCall];
+            }
+            return newMessages;
+          });
+          fullAssistantContent = emailMessage;
         }
       }
 
@@ -1094,6 +1132,84 @@ function AppContent() {
     );
   }
 
+  /**
+   * Handle sending an email via Gmail API
+   */
+  async function handleSendEmail(emailData) {
+    if (!accessToken) {
+      toast.error('Not authenticated. Please sign in again.');
+      return;
+    }
+
+    setIsEmailSending(true);
+
+    // Append email signature if set
+    let emailBody = emailData.body;
+    if (emailSignature && emailSignature.trim()) {
+      emailBody = `${emailBody}\n\n${emailSignature}`;
+    }
+
+    try {
+      const response = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          {
+            action: 'sendGmailEmail',
+            data: {
+              accessToken,
+              to: emailData.to,
+              subject: emailData.subject,
+              body: emailBody
+            }
+          },
+          (res) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else if (res?.success) {
+              resolve(res);
+            } else {
+              reject(new Error(res?.error || 'Failed to send email'));
+            }
+          }
+        );
+      });
+
+      // Clear the draft and show success
+      setEmailDraft(null);
+      toast.success(`Email sent to ${emailData.studentName || emailData.to}!`);
+
+      // Add confirmation message to chat
+      setMessages(prev => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `✓ Email sent successfully to ${emailData.studentName || emailData.to}!`
+        }
+      ]);
+
+    } catch (err) {
+      console.error('Failed to send email:', err);
+      toast.error(err.message || 'Failed to send email');
+    } finally {
+      setIsEmailSending(false);
+    }
+  }
+
+  /**
+   * Handle canceling/dismissing an email draft
+   */
+  function handleCancelEmailDraft() {
+    setEmailDraft(null);
+  }
+
+  /**
+   * Handle email signature change
+   */
+  async function handleEmailSignatureChange(newSignature) {
+    setEmailSignature(newSignature);
+    // Persist to storage
+    await chrome.storage.local.set({ emailSignature: newSignature });
+  }
+
   // Authentication screen
   if (!isAuthenticated) {
     return (
@@ -1267,6 +1383,8 @@ function AppContent() {
                 selectedConversationIds={selectedConversationIds}
                 isGeneratingLessonPlan={isGeneratingLessonPlanFromChat}
                 hasGeneratedPlan={!!chatLessonPlan}
+                emailDraft={emailDraft}
+                isEmailSending={isEmailSending}
                 onInputChange={setInputMessage}
                 onSendMessage={handleSendMessage}
                 onStopMessage={handleStopMessage}
@@ -1278,6 +1396,8 @@ function AppContent() {
                 onDeleteSelectedConversations={handleDeleteSelectedConversations}
                 onQuickAction={handleQuickAction}
                 onOpenLessonPlanModal={() => setIsChatLessonPlanModalOpen(true)}
+                onSendEmail={handleSendEmail}
+                onCancelEmailDraft={handleCancelEmailDraft}
               />
               <LessonPlanModal
                 lessonPlan={chatLessonPlan}
@@ -1292,8 +1412,11 @@ function AppContent() {
               gradingStyle={gradingStyle}
               testResponse={testResponse}
               isTesting={isTesting}
+              isGmailConnected={isAuthenticated}
+              emailSignature={emailSignature}
               onGradingStyleChange={setGradingStyle}
               onTestConnection={handleTestConnection}
+              onEmailSignatureChange={handleEmailSignatureChange}
             />
           )}
         </div>

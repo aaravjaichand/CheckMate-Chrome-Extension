@@ -11,9 +11,9 @@ const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
 const CHUNK_BATCH_DELAY = 50;
 
 /**
- * Tool definitions for lesson plan actions
+ * Tool definitions for assistant actions (lesson plans, emails, etc.)
  */
-const LESSON_PLAN_TOOLS = [
+const ASSISTANT_TOOLS = [
   {
     functionDeclarations: [
       {
@@ -37,6 +37,37 @@ const LESSON_PLAN_TOOLS = [
             }
           },
           required: ['classId', 'className']
+        }
+      },
+      {
+        name: 'send_email',
+        description: 'Draft an email to a student. Use this when the teacher asks to email, contact, message, or reach out to a student. The email will be shown to the teacher for review before sending.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            studentEmail: {
+              type: 'STRING',
+              description: 'The student email address (from context data)'
+            },
+            studentName: {
+              type: 'STRING',
+              description: 'The student full name'
+            },
+            subject: {
+              type: 'STRING',
+              description: 'Email subject line - be specific and professional'
+            },
+            body: {
+              type: 'STRING',
+              description: 'Email body content - personalized based on student performance data. Use proper greeting and sign-off.'
+            },
+            purpose: {
+              type: 'STRING',
+              description: 'The purpose of the email',
+              enum: ['offer_support', 'acknowledge_improvement', 'missing_work', 'general']
+            }
+          },
+          required: ['studentEmail', 'studentName', 'subject', 'body']
         }
       }
     ]
@@ -168,11 +199,10 @@ CLASSES:
 {availableClasses}
 
 DATA TYPES YOU MAY SEE:
-- Student grades: individual scores, strong topics (excelled), struggling topics (needs work)
+- Student grades: individual scores, strong topics (excelled), struggling topics (needs work), student email addresses
 - Class summaries: averages, common strong/struggling topics across students
 - Lesson plans: previously generated plans addressing specific topics
   IF THE TEACHER HAS ANY OF THESE, you will be able to view it, so if they are not there, the teacher doesn't have it
-
 
 RESPONSE RULES:
 1. If context says "No student data available" and teacher asks about grades/performance/analytics: tell them they haven't graded any assignments yet and suggest using the Grade tab to get started
@@ -183,7 +213,15 @@ RESPONSE RULES:
 TOOL: generate_lesson_plan
 - Only use when teacher explicitly asks to CREATE/GENERATE a NEW lesson plan
 - Requires valid classId and className from CLASSES list
-- If class is unclear, ask which one`;
+- If class is unclear, ask which one
+
+TOOL: send_email
+- Use when teacher asks to email, contact, message, or reach out to a student
+- Find the student's email address from the CONTEXT DATA above
+- Personalize the email based on the student's performance data (scores, struggling topics, improvements)
+- Write a professional, encouraging email appropriate for student communication
+- Include a proper greeting (Dear/Hi [Name]) and sign-off
+- ALWAYS use this tool - do not just write the email in your response`;
 
 /**
  * Send a message to the chatbot with RAG-enhanced context and tool support
@@ -193,6 +231,7 @@ TOOL: generate_lesson_plan
  * @param {Function} onChunk - Callback function called with batched chunks of text
  * @param {Function} onRetrievalStart - Callback when RAG retrieval starts
  * @param {Function} onRetrievalComplete - Callback when RAG retrieval completes
+ * @param {Function} onEmailDraft - Callback when send_email tool is called with email data
  * @param {AbortSignal} signal - Optional abort signal to cancel the stream
  * @returns {Promise<{response: string, retrievedDocs: Array, toolCalls: Array}>} The response, retrieved docs, and tool calls
  */
@@ -203,6 +242,7 @@ export async function sendChatMessageWithRAG(
   onChunk = null,
   onRetrievalStart = null,
   onRetrievalComplete = null,
+  onEmailDraft = null,
   signal = null
 ) {
   // Get the latest user message for embedding
@@ -218,12 +258,15 @@ export async function sendChatMessageWithRAG(
   if (teacherId) {
     try {
       if (onRetrievalStart) onRetrievalStart();
+      console.log('[Chatbot] Starting RAG retrieval...');
 
       // Embed the user's query
       const queryEmbedding = await generateEmbedding(latestUserMessage.content);
+      console.log('[Chatbot] Query embedding generated');
 
       // Fetch all teacher's RAG documents
       const allDocuments = await getRagDocuments(teacherId);
+      console.log('[Chatbot] Fetched', allDocuments.length, 'RAG documents');
 
       if (allDocuments.length > 0) {
         // Search for similar documents
@@ -278,6 +321,8 @@ export async function sendChatMessageWithRAG(
     parts: [{ text: msg.content }]
   }));
 
+  console.log('[Chatbot] Sending request to Gemini...');
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -289,7 +334,7 @@ export async function sendChatMessageWithRAG(
       systemInstruction: {
         parts: [{ text: systemPrompt }]
       },
-      tools: LESSON_PLAN_TOOLS,
+      tools: ASSISTANT_TOOLS,
       generationConfig: {
         maxOutputTokens: 2048,
         temperature: 0.7
@@ -297,6 +342,8 @@ export async function sendChatMessageWithRAG(
     }),
     signal
   });
+
+  console.log('[Chatbot] Response status:', response.status);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -309,9 +356,14 @@ export async function sendChatMessageWithRAG(
   const toolCalls = [];
   const batchHandler = onChunk ? createBatchedChunkHandler(onChunk) : null;
 
+  console.log('[Chatbot] Starting to read stream...');
+
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) {
+      console.log('[Chatbot] Stream done');
+      break;
+    }
 
     const chunk = decoder.decode(value, { stream: true });
     const lines = chunk.split('\n');
@@ -336,11 +388,26 @@ export async function sendChatMessageWithRAG(
             
             // Handle function call parts
             if (part.functionCall) {
+              console.log('[Chatbot] Function call detected:', part.functionCall.name);
               const fc = part.functionCall;
-              toolCalls.push({
+              const toolCall = {
                 type: fc.name,
                 ...fc.args
-              });
+              };
+              toolCalls.push(toolCall);
+
+              // Call email draft callback if this is a send_email tool
+              if (fc.name === 'send_email' && onEmailDraft) {
+                console.log('[Chatbot] Calling onEmailDraft callback');
+                onEmailDraft({
+                  studentEmail: fc.args.studentEmail || '',
+                  studentName: fc.args.studentName || '',
+                  subject: fc.args.subject || '',
+                  body: fc.args.body || '',
+                  purpose: fc.args.purpose || 'general',
+                  isComplete: true
+                });
+              }
             }
           }
         } catch {
@@ -354,6 +421,7 @@ export async function sendChatMessageWithRAG(
     batchHandler.flush();
   }
 
+  console.log('[Chatbot] Returning response. Text length:', fullText.length, 'Tool calls:', toolCalls.length);
   return { response: fullText, retrievedDocs, toolCalls };
 }
 

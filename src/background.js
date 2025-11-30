@@ -35,7 +35,8 @@ async function handleAuthentication() {
     'https://www.googleapis.com/auth/classroom.rosters.readonly',
     'https://www.googleapis.com/auth/classroom.profile.emails',
     'https://www.googleapis.com/auth/drive.readonly',
-    'https://www.googleapis.com/auth/cloud-platform'
+    'https://www.googleapis.com/auth/cloud-platform',
+    'https://www.googleapis.com/auth/gmail.send'
   ].join(' ');
 
   const authUrl = new URL('https://accounts.google.com/o/oauth2/auth');
@@ -138,6 +139,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'generateLessonPlan') {
     handleGenerateLessonPlan(request.data)
+      .then(result => sendResponse({ success: true, result }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+});
+
+// Handle Gmail send requests
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'sendGmailEmail') {
+    handleSendGmailEmail(request.data)
       .then(result => sendResponse({ success: true, result }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
@@ -568,4 +579,81 @@ Use the create_lesson_plan tool to return a structured lesson plan.`;
  */
 async function handleGenerateLessonPlan(data) {
   return await callGeminiLessonPlan(data);
+}
+
+/**
+ * Create RFC 2822 formatted email message
+ */
+function createEmailMessage(to, subject, body) {
+  // Create email headers and body in RFC 2822 format
+  const emailLines = [
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset="UTF-8"',
+    '',
+    body
+  ];
+  
+  const email = emailLines.join('\r\n');
+  
+  // Base64 URL-safe encode the email
+  const encodedEmail = btoa(unescape(encodeURIComponent(email)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+  
+  return encodedEmail;
+}
+
+/**
+ * Send email via Gmail API
+ */
+async function handleSendGmailEmail(data) {
+  const { accessToken, to, subject, body } = data;
+
+  if (!accessToken) {
+    throw new Error('No access token provided');
+  }
+
+  if (!to || !subject || !body) {
+    throw new Error('Missing required email fields (to, subject, body)');
+  }
+
+  // Create the raw email message
+  const rawMessage = createEmailMessage(to, subject, body);
+
+  // Send via Gmail API
+  const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      raw: rawMessage
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMessage = `Gmail API error (${response.status})`;
+    
+    try {
+      const errorJson = JSON.parse(errorText);
+      if (errorJson.error?.message) {
+        errorMessage = errorJson.error.message;
+      }
+    } catch {
+      // Use default error message
+    }
+    
+    throw new Error(errorMessage);
+  }
+
+  const result = await response.json();
+  return {
+    messageId: result.id,
+    threadId: result.threadId
+  };
 }

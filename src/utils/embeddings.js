@@ -119,7 +119,14 @@ export function searchSimilar(queryEmbedding, documents, topK = 10) {
 export function generateStudentSummary(gradeData) {
   const percentage = ((gradeData.overallScore / gradeData.totalPoints) * 100).toFixed(1);
   
-  let summary = `Student ${gradeData.studentName} in assignment "${gradeData.assignmentName}" scored ${gradeData.overallScore}/${gradeData.totalPoints} (${percentage}%).`;
+  let summary = `Student ${gradeData.studentName}`;
+  
+  // Include email if available (important for email drafting)
+  if (gradeData.studentEmail) {
+    summary += ` (email: ${gradeData.studentEmail})`;
+  }
+  
+  summary += ` in assignment "${gradeData.assignmentName}" scored ${gradeData.overallScore}/${gradeData.totalPoints} (${percentage}%).`;
   
   if (gradeData.strongTopics?.length) {
     summary += ` Strong topics: ${gradeData.strongTopics.join(', ')}.`;

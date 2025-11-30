@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { RefreshCw, Send, Square, ChevronLeft, Search, Sparkles, FileText } from 'lucide-react';
 import MessageRenderer from './MessageRenderer';
 import ConversationsList from './ConversationsList';
+import EmailDraftCard from './EmailDraftCard';
 
 /**
  * Quick action chip prompts for common teacher queries
@@ -54,6 +55,8 @@ function ToolCallUI({ toolCalls, onOpenLessonPlanModal, isGeneratingLessonPlan, 
  * @param {boolean} props.isLoadingConversations - Whether conversations are loading
  * @param {boolean} props.isGeneratingLessonPlan - Whether a lesson plan is being generated
  * @param {boolean} props.hasGeneratedPlan - Whether a plan has been generated and is ready to view
+ * @param {Object} props.emailDraft - Email draft data from AI tool call
+ * @param {boolean} props.isEmailSending - Whether an email is being sent
  * @param {Function} props.onInputChange - Handler for input change
  * @param {Function} props.onSendMessage - Handler for sending message
  * @param {Function} props.onStopMessage - Handler for stopping AI message generation
@@ -62,6 +65,8 @@ function ToolCallUI({ toolCalls, onOpenLessonPlanModal, isGeneratingLessonPlan, 
  * @param {Function} props.onBackToList - Handler for going back to conversation list
  * @param {Function} props.onQuickAction - Handler for quick action chip clicks
  * @param {Function} props.onOpenLessonPlanModal - Handler to open the lesson plan modal
+ * @param {Function} props.onSendEmail - Handler for sending email
+ * @param {Function} props.onCancelEmailDraft - Handler for canceling email draft
  */
 export default function AssistantTab({
   conversations,
@@ -75,6 +80,8 @@ export default function AssistantTab({
   selectedConversationIds,
   isGeneratingLessonPlan,
   hasGeneratedPlan,
+  emailDraft,
+  isEmailSending,
   onInputChange,
   onSendMessage,
   onStopMessage,
@@ -85,7 +92,9 @@ export default function AssistantTab({
   onToggleConversationSelection,
   onDeleteSelectedConversations,
   onQuickAction,
-  onOpenLessonPlanModal
+  onOpenLessonPlanModal,
+  onSendEmail,
+  onCancelEmailDraft
 }) {
   const messagesEndRef = useRef(null);
 
@@ -201,6 +210,21 @@ export default function AssistantTab({
             <div className="bg-gray-100 rounded-lg px-4 py-2 flex items-center gap-2">
               <RefreshCw className="w-4 h-4 text-gray-600 animate-spin" />
               <span className="text-sm text-gray-600">Generating response...</span>
+            </div>
+          </div>
+        )}
+
+        {/* Email Draft Card */}
+        {emailDraft && (
+          <div className="flex justify-start">
+            <div className="w-full max-w-md">
+              <EmailDraftCard
+                emailData={emailDraft}
+                isStreaming={!emailDraft.isComplete}
+                isSending={isEmailSending}
+                onSend={onSendEmail}
+                onCancel={onCancelEmailDraft}
+              />
             </div>
           </div>
         )}
