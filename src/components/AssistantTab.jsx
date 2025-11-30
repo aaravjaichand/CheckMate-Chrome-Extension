@@ -161,7 +161,7 @@ export default function AssistantTab({
                 className={`message-bubble rounded-lg px-4 py-2 min-w-0 overflow-hidden ${
                   msg.role === 'user'
                     ? 'bg-blue-600 text-white max-w-[80%]'
-                    : 'bg-gray-100 text-gray-900 max-w-[80%]'
+                  : 'bg-gray-100 text-gray-900 w-full'
                 }`}
                 style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}
               >
@@ -210,7 +210,7 @@ export default function AssistantTab({
       </div>
 
       {/* Chat Input */}
-      <div className="bg-white px-6 pb-6">
+      <div className="bg-white px-4 pb-6">
         <form onSubmit={onSendMessage} className="relative">
           <textarea
             value={inputMessage}
@@ -225,7 +225,7 @@ export default function AssistantTab({
             placeholder="Ask anything..."
             disabled={isSendingMessage}
             rows={1}
-            className="w-full min-h-[80px] max-h-[200px] pl-4 pr-16 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed text-sm resize-none overflow-y-auto"
+            className="w-full min-h-[100px] max-h-[200px] pl-4 pr-16 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed text-sm resize-none overflow-y-auto"
             style={{ 
               scrollbarWidth: 'thin',
               scrollbarColor: '#cbd5e0 transparent'
