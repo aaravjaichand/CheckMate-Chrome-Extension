@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getClassAnalytics, getStudentAnalytics, getTeacherSettings, saveLessonPlan, getLessonPlansByClass, deleteLessonPlan, saveLessonPlanRagDocument, auth } from '../utils/firebase';
 import { generateEmbedding, generateLessonPlanSummary } from '../utils/embeddings';
-import { BarChart3, TrendingUp, Users, AlertCircle, BookOpen, ChevronRight, ArrowLeft, Sparkles, RefreshCw, FileText, Clock, X } from 'lucide-react';
+import { BarChart3, TrendingUp, Users, AlertCircle, BookOpen, ChevronRight, ArrowLeft, Sparkles, RefreshCw, FileText, Clock, X, CheckCircle } from 'lucide-react';
 import StudentChart from './StudentChart';
 import LessonPlanModal from './LessonPlanModal';
 
@@ -222,11 +222,12 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
   }
 
   async function handleDeleteSelectedLessonPlans() {
-    if (selectedLessonPlanIds.length === 0) return;
+    if (selectedLessonPlanIds.length === 0 || !auth.currentUser) return;
 
     try {
       for (const planId of selectedLessonPlanIds) {
-        await deleteLessonPlan(planId);
+        // Pass teacherId to also delete the RAG document
+        await deleteLessonPlan(planId, auth.currentUser.uid);
       }
       // Refresh the lesson plans list
       if (selectedClass && auth.currentUser) {
@@ -316,6 +317,15 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
                         {assignment.score}/{assignment.totalPoints}
                       </div>
                     </div>
+                    {assignment.strongTopics?.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {assignment.strongTopics.map((topic, i) => (
+                          <span key={i} className="text-xs px-2 py-1 bg-green-50 text-green-700 rounded-full border border-green-100">
+                            {topic}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {assignment.strugglingTopics?.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2">
                         {assignment.strugglingTopics.map((topic, i) => (
@@ -329,6 +339,29 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
                 ))}
               </div>
             </div>
+
+              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                <div className="flex items-center space-x-2 mb-4">
+                  <CheckCircle className="text-green-500" size={20} />
+                  <h3 className="font-semibold text-gray-900">Areas of Strength</h3>
+                </div>
+                {studentAnalytics.strongTopics && Object.keys(studentAnalytics.strongTopics).length > 0 ? (
+                  <div className="space-y-3">
+                    {Object.entries(studentAnalytics.strongTopics)
+                      .sort(([, a], [, b]) => b.count - a.count)
+                      .map(([topic, data]) => (
+                        <div key={topic} className="flex items-center justify-between">
+                          <span className="text-sm text-gray-700 capitalize">{topic}</span>
+                          <span className="text-xs bg-green-100 px-2 py-1 rounded text-green-600">
+                            Excelled in {data.count} {data.count === 1 ? 'assignment' : 'assignments'}
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500 italic">No specific strong topics identified yet.</p>
+                )}
+              </div>
 
             <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
               <div className="flex items-center space-x-2 mb-4">
@@ -461,6 +494,37 @@ export default function AnalyticsTab({ courses, selectedClass, onClassSelect }) 
                 </div>
               </div>
             )}
+
+              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                <div className="flex items-center space-x-2 mb-4">
+                  <CheckCircle className="text-green-500" size={20} />
+                  <h3 className="font-semibold text-gray-900">Common Strong Topics</h3>
+                </div>
+
+                {analytics.commonStrongTopics && Object.keys(analytics.commonStrongTopics).length > 0 ? (
+                  <div className="space-y-3">
+                    {Object.entries(analytics.commonStrongTopics)
+                      .sort(([, a], [, b]) => b - a)
+                      .slice(0, 5)
+                      .map(([topic, count]) => (
+                        <div key={topic} className="flex items-center justify-between">
+                          <span className="text-sm text-gray-700 capitalize">{topic}</span>
+                          <div className="flex items-center space-x-2">
+                            <div className="w-24 h-2 bg-gray-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-green-500 rounded-full"
+                                style={{ width: `${Math.min((count / (analytics.totalAssignments || 1)) * 100, 100)}%` }}
+                              />
+                            </div>
+                            <span className="text-xs text-gray-500 font-medium">{count}</span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500 italic">No data available yet.</p>
+                )}
+              </div>
 
             <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
               <div className="flex items-center space-x-2 mb-4">

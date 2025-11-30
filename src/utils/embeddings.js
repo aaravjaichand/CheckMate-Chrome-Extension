@@ -121,6 +121,10 @@ export function generateStudentSummary(gradeData) {
   
   let summary = `Student ${gradeData.studentName} in assignment "${gradeData.assignmentName}" scored ${gradeData.overallScore}/${gradeData.totalPoints} (${percentage}%).`;
   
+  if (gradeData.strongTopics?.length) {
+    summary += ` Strong topics: ${gradeData.strongTopics.join(', ')}.`;
+  }
+
   if (gradeData.strugglingTopics?.length) {
     summary += ` Struggling topics: ${gradeData.strugglingTopics.join(', ')}.`;
   }
@@ -148,6 +152,15 @@ export function generateStudentSummary(gradeData) {
 export function generateClassSummary(classData, className) {
   let summary = `Class "${className}" has an average grade of ${classData.averageGrade?.toFixed(1) || 0}% across ${classData.totalAssignments || 0} graded assignments.`;
   
+  // Add strong topics
+  if (classData.commonStrongTopics && Object.keys(classData.commonStrongTopics).length > 0) {
+    const topStrongTopics = Object.entries(classData.commonStrongTopics)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([topic, count]) => `${topic} (${count} students)`);
+    summary += ` Common strong topics: ${topStrongTopics.join(', ')}.`;
+  }
+
   // Add struggling topics
   if (classData.commonStrugglingTopics && Object.keys(classData.commonStrugglingTopics).length > 0) {
     const topTopics = Object.entries(classData.commonStrugglingTopics)

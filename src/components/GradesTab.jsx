@@ -225,6 +225,24 @@ export default function GradesTab({
                 </div>
               </div>
 
+              {selectedGrade.questions?.some(q => q.isCorrect) && (
+                <div className="bg-green-50 border border-green-200 rounded p-2">
+                  <div className="text-xs font-medium text-gray-700 mb-1">Strong Topics:</div>
+                  <div className="flex flex-wrap gap-1">
+                    {[...new Set(
+                      selectedGrade.questions
+                        .filter(q => q.isCorrect)
+                        .map(q => q.topic)
+                        .filter(Boolean)
+                    )].map((topic, index) => (
+                      <span key={index} className="px-2 py-0.5 bg-green-100 text-green-800 rounded text-xs font-medium">
+                        {topic}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {selectedGrade.questions?.some(q => !q.isCorrect) && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded p-2">
                   <div className="text-xs font-medium text-gray-700 mb-1">Struggling Topics:</div>

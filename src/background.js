@@ -279,6 +279,7 @@ For each question:
 After grading all questions:
 1. Calculate the overall score
 2. Create a list of topics the student struggled with (questions they got wrong or partially correct)
+3. Create a list of topics the student excelled in (questions they got completely correct with full points)
 `;
 
   const gradingTool = {
@@ -298,7 +299,12 @@ After grading all questions:
         strugglingTopics: {
           type: "ARRAY",
           items: { type: "STRING" },
-          description: "List of topics the student struggled with"
+          description: "List of topics the student struggled with (questions they got wrong or partially correct)"
+        },
+        strongTopics: {
+          type: "ARRAY",
+          items: { type: "STRING" },
+          description: "List of topics the student excelled in (questions they got completely correct with full points)"
         },
         questions: {
           type: "ARRAY",
@@ -325,7 +331,7 @@ After grading all questions:
           }
         }
       },
-      required: ["overallScore", "totalPoints", "strugglingTopics", "questions"]
+      required: ["overallScore", "totalPoints", "strugglingTopics", "strongTopics", "questions"]
     }
   };
 

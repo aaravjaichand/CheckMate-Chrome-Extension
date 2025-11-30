@@ -300,6 +300,7 @@ export async function updateClassAnalytics(classId, gradeData, studentId = null,
         totalAssignments: 1,
         lastUpdated: Date.now(),
         commonStrugglingTopics: {},
+        commonStrongTopics: {},
         studentPerformances: {}
       };
 
@@ -308,6 +309,14 @@ export async function updateClassAnalytics(classId, gradeData, studentId = null,
           // Normalize topic key to lowercase to prevent duplicates
           const normalizedTopic = topic.toLowerCase().trim();
           newData.commonStrugglingTopics[normalizedTopic] = 1;
+        });
+      }
+
+      if (gradeData.strongTopics?.length) {
+        gradeData.strongTopics.forEach(topic => {
+          // Normalize topic key to lowercase to prevent duplicates
+          const normalizedTopic = topic.toLowerCase().trim();
+          newData.commonStrongTopics[normalizedTopic] = 1;
         });
       }
 
@@ -340,6 +349,16 @@ export async function updateClassAnalytics(classId, gradeData, studentId = null,
           topics[normalizedTopic] = (topics[normalizedTopic] || 0) + 1;
         });
         newData.commonStrugglingTopics = topics;
+      }
+
+      if (gradeData.strongTopics?.length) {
+        const strongTopics = data.commonStrongTopics || {};
+        gradeData.strongTopics.forEach(topic => {
+          // Normalize topic key to lowercase to prevent duplicates
+          const normalizedTopic = topic.toLowerCase().trim();
+          strongTopics[normalizedTopic] = (strongTopics[normalizedTopic] || 0) + 1;
+        });
+        newData.commonStrongTopics = strongTopics;
       }
 
       if (studentId && studentName) {
@@ -387,7 +406,8 @@ export async function updateStudentAnalytics(studentId, classId, gradeData) {
       score: gradeData.overallScore,
       totalPoints: gradeData.totalPoints,
       gradedAt: Date.now(),
-      strugglingTopics: gradeData.strugglingTopics || []
+      strugglingTopics: gradeData.strugglingTopics || [],
+      strongTopics: gradeData.strongTopics || []
     };
 
     let newData;
@@ -398,6 +418,7 @@ export async function updateStudentAnalytics(studentId, classId, gradeData) {
         totalAssignments: 1,
         lastUpdated: Date.now(),
         strugglingTopics: {},
+        strongTopics: {},
         assignmentHistory: [assignmentEntry]
       };
 
@@ -406,6 +427,17 @@ export async function updateStudentAnalytics(studentId, classId, gradeData) {
           // Normalize topic key to lowercase to prevent duplicates
           const normalizedTopic = topic.toLowerCase().trim();
           newData.strugglingTopics[normalizedTopic] = {
+            count: 1,
+            assignments: [gradeData.assignmentId]
+          };
+        });
+      }
+
+      if (gradeData.strongTopics?.length) {
+        gradeData.strongTopics.forEach(topic => {
+          // Normalize topic key to lowercase to prevent duplicates
+          const normalizedTopic = topic.toLowerCase().trim();
+          newData.strongTopics[normalizedTopic] = {
             count: 1,
             assignments: [gradeData.assignmentId]
           };
@@ -440,6 +472,22 @@ export async function updateStudentAnalytics(studentId, classId, gradeData) {
           }
         });
         newData.strugglingTopics = topics;
+      }
+
+      if (gradeData.strongTopics?.length) {
+        const strongTopics = data.strongTopics || {};
+        gradeData.strongTopics.forEach(topic => {
+          // Normalize topic key to lowercase to prevent duplicates
+          const normalizedTopic = topic.toLowerCase().trim();
+          if (!strongTopics[normalizedTopic]) {
+            strongTopics[normalizedTopic] = { count: 0, assignments: [] };
+          }
+          strongTopics[normalizedTopic].count += 1;
+          if (!strongTopics[normalizedTopic].assignments.includes(gradeData.assignmentId)) {
+            strongTopics[normalizedTopic].assignments.push(gradeData.assignmentId);
+          }
+        });
+        newData.strongTopics = strongTopics;
       }
     }
 
@@ -545,6 +593,7 @@ export async function recalculateClassAnalytics(classId, teacherId) {
       totalAssignments: 0,
       lastUpdated: Date.now(),
       commonStrugglingTopics: {},
+      commonStrongTopics: {},
       studentPerformances: {}
     });
     return;
@@ -553,6 +602,7 @@ export async function recalculateClassAnalytics(classId, teacherId) {
   // Calculate new analytics from scratch
   let totalPercentage = 0;
   const commonStrugglingTopics = {};
+  const commonStrongTopics = {};
   const studentPerformances = {};
 
   for (const grade of grades) {
@@ -564,6 +614,14 @@ export async function recalculateClassAnalytics(classId, teacherId) {
       grade.strugglingTopics.forEach(topic => {
         const normalizedTopic = topic.toLowerCase().trim();
         commonStrugglingTopics[normalizedTopic] = (commonStrugglingTopics[normalizedTopic] || 0) + 1;
+      });
+    }
+
+    // Aggregate strong topics
+    if (grade.strongTopics?.length) {
+      grade.strongTopics.forEach(topic => {
+        const normalizedTopic = topic.toLowerCase().trim();
+        commonStrongTopics[normalizedTopic] = (commonStrongTopics[normalizedTopic] || 0) + 1;
       });
     }
 
@@ -596,6 +654,7 @@ export async function recalculateClassAnalytics(classId, teacherId) {
     totalAssignments: grades.length,
     lastUpdated: Date.now(),
     commonStrugglingTopics,
+    commonStrongTopics,
     studentPerformances
   });
 }
@@ -618,6 +677,7 @@ export async function recalculateStudentAnalytics(studentId, classId, teacherId)
       totalAssignments: 0,
       lastUpdated: Date.now(),
       strugglingTopics: {},
+      strongTopics: {},
       assignmentHistory: []
     });
     return;
@@ -626,6 +686,7 @@ export async function recalculateStudentAnalytics(studentId, classId, teacherId)
   // Calculate new analytics from scratch
   let totalPercentage = 0;
   const strugglingTopics = {};
+  const strongTopics = {};
   const assignmentHistory = [];
 
   for (const grade of studentGrades) {
@@ -639,7 +700,8 @@ export async function recalculateStudentAnalytics(studentId, classId, teacherId)
       score: grade.overallScore,
       totalPoints: grade.totalPoints,
       gradedAt: grade.gradedAt,
-      strugglingTopics: grade.strugglingTopics || []
+      strugglingTopics: grade.strugglingTopics || [],
+      strongTopics: grade.strongTopics || []
     });
 
     // Aggregate struggling topics
@@ -655,6 +717,20 @@ export async function recalculateStudentAnalytics(studentId, classId, teacherId)
         }
       });
     }
+
+    // Aggregate strong topics
+    if (grade.strongTopics?.length) {
+      grade.strongTopics.forEach(topic => {
+        const normalizedTopic = topic.toLowerCase().trim();
+        if (!strongTopics[normalizedTopic]) {
+          strongTopics[normalizedTopic] = { count: 0, assignments: [] };
+        }
+        strongTopics[normalizedTopic].count += 1;
+        if (!strongTopics[normalizedTopic].assignments.includes(grade.assignmentId)) {
+          strongTopics[normalizedTopic].assignments.push(grade.assignmentId);
+        }
+      });
+    }
   }
 
   // Sort assignment history by gradedAt
@@ -665,6 +741,7 @@ export async function recalculateStudentAnalytics(studentId, classId, teacherId)
     totalAssignments: studentGrades.length,
     lastUpdated: Date.now(),
     strugglingTopics,
+    strongTopics,
     assignmentHistory
   });
 }
@@ -745,12 +822,43 @@ export function listenToLessonPlansByClass(classId, teacherId, callback) {
 }
 
 /**
- * Delete a lesson plan (soft delete)
+ * Delete a lesson plan (soft delete) and its RAG document
  * @param {string} lessonPlanId - Lesson Plan ID
+ * @param {string} teacherId - Teacher ID (optional, for RAG cleanup)
  */
-export async function deleteLessonPlan(lessonPlanId) {
+export async function deleteLessonPlan(lessonPlanId, teacherId = null) {
   const lessonPlanRef = doc(db, 'lessonPlans', lessonPlanId);
   await updateDoc(lessonPlanRef, { deleted: true, deletedAt: Date.now() });
+  
+  // Also delete the associated RAG document if teacherId provided
+  if (teacherId) {
+    await deleteRagDocumentForLessonPlan(teacherId, lessonPlanId);
+  }
+}
+
+/**
+ * Delete RAG document for a specific lesson plan
+ * @param {string} teacherId - Teacher ID
+ * @param {string} lessonPlanId - Lesson Plan ID
+ */
+export async function deleteRagDocumentForLessonPlan(teacherId, lessonPlanId) {
+  const ragDocumentsRef = collection(db, 'ragDocuments');
+  
+  const ragQuery = query(
+    ragDocumentsRef,
+    where('teacherId', '==', teacherId),
+    where('lessonPlanId', '==', lessonPlanId),
+    where('type', '==', 'lesson_plan')
+  );
+  
+  const snapshot = await getDocs(ragQuery);
+  
+  const deletePromises = [];
+  snapshot.forEach((docSnapshot) => {
+    deletePromises.push(deleteDoc(doc(db, 'ragDocuments', docSnapshot.id)));
+  });
+  
+  await Promise.all(deletePromises);
 }
 
 // ============================================
@@ -822,6 +930,42 @@ export async function deleteRagDocumentsForStudent(teacherId, studentId, classId
     }
   });
   
+  await Promise.all(deletePromises);
+}
+
+/**
+ * Delete RAG documents for specific grades (used when grades are deleted)
+ * @param {string} teacherId - Teacher ID
+ * @param {string} classId - Class ID
+ * @param {Array<{studentId: string, assignmentName: string}>} gradeInfos - Array of grade info objects
+ */
+export async function deleteRagDocumentsForGrades(teacherId, classId, gradeInfos) {
+  const ragDocumentsRef = collection(db, 'ragDocuments');
+
+  // Get all student-type RAG documents for this teacher and class
+  const ragQuery = query(
+    ragDocumentsRef,
+    where('teacherId', '==', teacherId),
+    where('classId', '==', classId),
+    where('type', '==', 'student')
+  );
+
+  const snapshot = await getDocs(ragQuery);
+
+  const deletePromises = [];
+  snapshot.forEach((docSnapshot) => {
+    const data = docSnapshot.data();
+    // Check if this document matches any of the deleted grades
+    const matchesGrade = gradeInfos.some(info =>
+      data.studentId === info.studentId &&
+      data.metadata?.assignmentName === info.assignmentName
+    );
+
+    if (matchesGrade) {
+      deletePromises.push(deleteDoc(doc(db, 'ragDocuments', docSnapshot.id)));
+    }
+  });
+
   await Promise.all(deletePromises);
 }
 

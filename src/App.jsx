@@ -25,7 +25,8 @@ import {
   getClassAnalytics,
   upsertClassRagDocument,
   saveLessonPlan,
-  saveLessonPlanRagDocument
+  saveLessonPlanRagDocument,
+  deleteRagDocumentsForGrades
 } from './utils/firebase';
 import { generateEmbedding, generateStudentSummary, generateClassSummary, generateLessonPlanSummary } from './utils/embeddings';
 import { ToastProvider, useToast } from './components/Toast';
@@ -456,6 +457,10 @@ function AppContent() {
         result.strugglingTopics = [];
       }
 
+      if (!Array.isArray(result.strongTopics)) {
+        result.strongTopics = [];
+      }
+
       setGradingResult(result);
     } catch (err) {
       let errorMessage = err.message;
@@ -486,6 +491,7 @@ function AppContent() {
       overallScore,
       totalPoints,
       strugglingTopics,
+      strongTopics,
       questions
     } = gradeData;
 
@@ -496,6 +502,7 @@ function AppContent() {
       overallScore,
       totalPoints,
       strugglingTopics,
+      strongTopics,
       questions
     });
 
@@ -511,7 +518,8 @@ function AppContent() {
         className,
         assignmentName,
         avgScore: (overallScore / totalPoints) * 100,
-        topics: strugglingTopics || []
+        strugglingTopics: strugglingTopics || [],
+        strongTopics: strongTopics || []
       }
     }, studentEmbedding);
 
@@ -527,6 +535,9 @@ function AppContent() {
         totalAssignments: classAnalytics.totalAssignments,
         topStrugglingTopics: classAnalytics.commonStrugglingTopics 
           ? Object.keys(classAnalytics.commonStrugglingTopics).slice(0, 5)
+          : [],
+        topStrongTopics: classAnalytics.commonStrongTopics
+          ? Object.keys(classAnalytics.commonStrongTopics).slice(0, 5)
           : []
       });
     }
@@ -569,7 +580,9 @@ function AppContent() {
         totalPoints: gradingResult.totalPoints,
         syncedToGoogleClassroom: syncToClassroom,
         aiResultId,
-        questions: gradingResult.questions
+        questions: gradingResult.questions,
+        strugglingTopics: gradingResult.strugglingTopics || [],
+        strongTopics: gradingResult.strongTopics || []
       });
 
       if (gradingResult.strugglingTopics?.length) {
@@ -591,7 +604,8 @@ function AppContent() {
           {
             overallScore: gradingResult.overallScore,
             totalPoints: gradingResult.totalPoints,
-            strugglingTopics: gradingResult.strugglingTopics
+            strugglingTopics: gradingResult.strugglingTopics,
+            strongTopics: gradingResult.strongTopics
           },
           selectedSubmission.userId,
           selectedSubmission.studentName
@@ -601,7 +615,8 @@ function AppContent() {
           assignmentName: selectedAssignment.title,
           overallScore: gradingResult.overallScore,
           totalPoints: gradingResult.totalPoints,
-          strugglingTopics: gradingResult.strugglingTopics
+          strugglingTopics: gradingResult.strugglingTopics,
+          strongTopics: gradingResult.strongTopics
         })
       ]);
 
@@ -616,6 +631,7 @@ function AppContent() {
         overallScore: gradingResult.overallScore,
         totalPoints: gradingResult.totalPoints,
         strugglingTopics: gradingResult.strugglingTopics,
+        strongTopics: gradingResult.strongTopics,
         questions: gradingResult.questions
       }).catch(err => {
         // RAG indexing failures shouldn't block the user
@@ -685,6 +701,12 @@ function AppContent() {
       const gradesToDelete = gradesHistory.filter(g => selectedGradeIds.includes(g.id));
       const affectedStudentIds = [...new Set(gradesToDelete.map(g => g.studentId))];
 
+      // Prepare grade info for RAG document cleanup
+      const gradeInfosForRagCleanup = gradesToDelete.map(g => ({
+        studentId: g.studentId,
+        assignmentName: g.assignmentName
+      }));
+
       // Soft delete each selected grade
       for (const gradeId of selectedGradeIds) {
         await deleteGrade(gradeId);
@@ -697,6 +719,34 @@ function AppContent() {
       for (const studentId of affectedStudentIds) {
         await recalculateStudentAnalytics(studentId, selectedClassForGrades.id, firebaseUser.uid);
       }
+
+      // Clean up RAG documents for deleted grades (non-blocking)
+      deleteRagDocumentsForGrades(firebaseUser.uid, selectedClassForGrades.id, gradeInfosForRagCleanup)
+        .catch(err => console.warn('RAG document cleanup failed:', err.message));
+
+      // Update class summary RAG document with new analytics (non-blocking)
+      (async () => {
+        try {
+          const updatedAnalytics = await getClassAnalytics(selectedClassForGrades.id);
+          if (updatedAnalytics) {
+            const classSummary = generateClassSummary(updatedAnalytics, selectedClassForGrades.name);
+            const classEmbedding = await generateEmbedding(classSummary);
+            await upsertClassRagDocument(firebaseUser.uid, selectedClassForGrades.id, classSummary, classEmbedding, {
+              className: selectedClassForGrades.name,
+              averageGrade: updatedAnalytics.averageGrade,
+              totalAssignments: updatedAnalytics.totalAssignments,
+              topStrugglingTopics: updatedAnalytics.commonStrugglingTopics
+                ? Object.keys(updatedAnalytics.commonStrugglingTopics).slice(0, 5)
+                : [],
+              topStrongTopics: updatedAnalytics.commonStrongTopics
+                ? Object.keys(updatedAnalytics.commonStrongTopics).slice(0, 5)
+                : []
+            });
+          }
+        } catch (err) {
+          console.warn('Class RAG document update failed:', err.message);
+        }
+      })();
 
       setIsGradeSelectMode(false);
       setSelectedGradeIds([]);
